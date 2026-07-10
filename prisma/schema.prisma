@@ -7,6 +7,155 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Milestone 0: intentionally empty schema.
-// We just need Prisma to connect and migrate successfully.
-// Real models (Organization, User, etc.) come in Milestone 1.
+enum Role {
+  ADMIN
+  MANAGER
+  MEMBER
+  VIEWER
+}
+
+enum IssueStatus {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+}
+
+enum IssuePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique   // for clean URLs later e.g. /org/acme-inc
+  createdAt DateTime @default(now())
+
+  memberships  Membership[]
+  projects     Project[]
+  issues       Issue[]
+  activityLogs ActivityLog[]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+
+  memberships     Membership[]
+  createdIssues   Issue[]      @relation("IssueCreator")
+  assignedIssues  Issue[]      @relation("IssueAssignee")
+  comments        Comment[]
+  activityLogs    ActivityLog[]
+  refreshTokens RefreshToken[]
+}
+
+// The join table. This is the crux of multi-tenant role handling.
+model Membership {
+  id             String   @id @default(uuid())
+  role           Role     @default(MEMBER)
+  createdAt      DateTime @default(now())
+
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // A user can only have ONE membership (one role) per organization.
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model Project {
+  id             String   @id @default(uuid())
+  name           String
+  description    String?
+  createdAt      DateTime @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  issues         Issue[]
+
+  @@index([organizationId])
+}
+
+model Issue {
+  id             String        @id @default(uuid())
+  title          String
+  description    String?
+  status         IssueStatus   @default(TODO)
+  priority       IssuePriority @default(MEDIUM)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Direct tenant scoping — see explanation above. Deliberately denormalized.
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  creatorId      String
+  creator        User          @relation("IssueCreator", fields: [creatorId], references: [id])
+
+  assigneeId     String?
+  assignee       User?         @relation("IssueAssignee", fields: [assigneeId], references: [id])
+
+  comments       Comment[]
+  activityLogs   ActivityLog[]
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([assigneeId])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  body      String
+  createdAt DateTime @default(now())
+
+  issueId   String
+  issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+
+  @@index([issueId])
+}
+
+model ActivityLog {
+  id             String   @id @default(uuid())
+  action         String   // e.g. "ISSUE_CREATED", "ISSUE_STATUS_CHANGED", "MEMBER_INVITED"
+  metadata       Json?    // flexible field for action-specific details (old status, new status, etc.)
+  createdAt      DateTime @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+
+  issueId        String?
+  issue          Issue?       @relation(fields: [issueId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([issueId])
+}
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique   // never store raw tokens — see explanation below
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}

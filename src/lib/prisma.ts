@@ -1,6 +1,10 @@
 import { PrismaClient } from "@prisma/client";
 
-// Single shared Prisma instance across the app.
-// Why: creating a new PrismaClient per request exhausts DB connections
-// under load — a real production bug, not a theoretical one.
-export const prisma = new PrismaClient();
+const databaseUrl =
+  process.env.NODE_ENV === "test"
+    ? process.env.TEST_DATABASE_URL
+    : process.env.DATABASE_URL;
+
+export const prisma = new PrismaClient({
+  datasources: { db: { url: databaseUrl } },
+});
