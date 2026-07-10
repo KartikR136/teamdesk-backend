@@ -11,15 +11,6 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      redis:
-        image: redis:7
-        ports:
-            - 6379:6379
-            options: >-
-              --health-cmd "redis-cli ping"
-              --health-interval 10s
-              --health-timeout 5s
-              --health-retries 5
       postgres:
         image: postgres:16
         env:
@@ -40,7 +31,7 @@ jobs:
       JWT_ACCESS_SECRET: ci-test-secret-access
       JWT_REFRESH_SECRET: ci-test-secret-refresh
       DATABASE_URL: postgresql://testuser:testpass@localhost:5432/teamdesk_test
-      REDIS_URL: redis://localhost:6379
+      REDIS_URL: ${{ secrets.REDIS_URL }}
 
     steps:
       - uses: actions/checkout@v4
