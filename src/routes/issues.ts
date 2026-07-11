@@ -7,6 +7,12 @@ import {
   resolveOrgFromParam,
   resolveOrgFromIssue,
 } from "../lib/resolveOrgContext";
+import {
+  paginationQuerySchema,
+  buildPaginationArgs,
+  paginateResults,
+} from "../lib/pagination";
+import { logActivity, ActivityAction } from "../lib/activityLog";
 
 const router = Router();
 router.use(requireAuth);
@@ -46,6 +52,15 @@ router.post(
         creatorId: req.userId!,
       },
     });
+
+    await logActivity({
+      organizationId: req.organizationId!,
+      userId: req.userId!,
+      action: ActivityAction.ISSUE_CREATED,
+      issueId: issue.id,
+      metadata: { title: issue.title, projectId: issue.projectId },
+    });
+
     res.status(201).json(issue);
   },
 );
@@ -76,6 +91,21 @@ router.patch(
       where: { id: issueId },
       data: parsed.data,
     });
+
+    // Logged as a single ISSUE_UPDATED event carrying whichever fields the
+    // client actually changed, rather than separate STATUS_CHANGED /
+    // PRIORITY_CHANGED / ASSIGNEE_CHANGED events. Splitting those out would
+    // need a pre-update fetch to diff old vs new values — deferred; this
+    // milestone's scope is "Issue update" as one action, not a full field-
+    // level audit trail.
+    await logActivity({
+      organizationId: req.organizationId!,
+      userId: req.userId!,
+      action: ActivityAction.ISSUE_UPDATED,
+      issueId: updated.id,
+      metadata: parsed.data,
+    });
+
     res.json(updated);
   },
 );
@@ -85,11 +115,30 @@ router.get(
   resolveOrgFromParam("organizationId"),
   requireRole("VIEWER"),
   async (req: OrgScopedRequest, res) => {
+    const parsedQuery = paginationQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+      return res.status(400).json({ error: parsedQuery.error.flatten() });
+    }
+
+    let paginationArgs;
+    try {
+      paginationArgs = buildPaginationArgs(parsedQuery.data);
+    } catch {
+      return res.status(400).json({ error: "Invalid cursor" });
+    }
+
     const issues = await prisma.issue.findMany({
       where: { organizationId: req.organizationId! },
       include: { assignee: { select: { id: true, name: true } } },
+      ...paginationArgs,
     });
-    res.json(issues);
+
+    const { data, hasNextPage, nextCursor } = paginateResults(
+      issues,
+      parsedQuery.data.limit,
+    );
+
+    res.json({ data, hasNextPage, nextCursor });
   },
 );
 
@@ -104,6 +153,18 @@ router.get(
       return res.status(400).json({ error: "Invalid project id" });
     }
 
+    const parsedQuery = paginationQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+      return res.status(400).json({ error: parsedQuery.error.flatten() });
+    }
+
+    let paginationArgs;
+    try {
+      paginationArgs = buildPaginationArgs(parsedQuery.data);
+    } catch {
+      return res.status(400).json({ error: "Invalid cursor" });
+    }
+
     const issues = await prisma.issue.findMany({
       where: {
         organizationId: req.organizationId!,
@@ -114,8 +175,15 @@ router.get(
           select: { id: true, name: true },
         },
       },
+      ...paginationArgs,
     });
-    res.json(issues);
+
+    const { data, hasNextPage, nextCursor } = paginateResults(
+      issues,
+      parsedQuery.data.limit,
+    );
+
+    res.json({ data, hasNextPage, nextCursor });
   },
 );
 

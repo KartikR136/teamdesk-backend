@@ -6,6 +6,10 @@ import authRouter from "./routes/auth";
 import organizationsRouter from "./routes/organizations";
 import projectsRouter from "./routes/projects";
 import issuesRouter from "./routes/issues";
+import commentsRouter from "./routes/comments";
+import activityRouter from "./routes/activity";
+import invitationsRouter from "./routes/invitations";
+import membersRouter from "./routes/members";
 import { errorHandler } from "./middleware/errorHandler";
 import { authLimiter, generalLimiter } from "./middleware/rateLimiters";
 
@@ -40,5 +44,9 @@ app.use("/api/auth", authRouter);
 app.use("/api/organizations", organizationsRouter);
 app.use("/api", projectsRouter); // has full nested paths already
 app.use("/api", issuesRouter);
+app.use("/api", commentsRouter); // has full nested paths already (issues/:id/comments, comments/:id)
+app.use("/api", activityRouter); // has full nested path already (organizations/:id/activity)
+app.use("/api", invitationsRouter); // has full nested paths already (organizations/:id/invitations, invitations/me, invitations/:id/accept|reject)
+app.use("/api", membersRouter); // has full nested paths already (organizations/:id/members, .../members/:userId)
 
 app.use(errorHandler);

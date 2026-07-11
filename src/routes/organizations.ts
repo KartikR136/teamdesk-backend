@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/requireAuth";
+import { logActivity, ActivityAction } from "../lib/activityLog";
 
 const router = Router();
 
@@ -38,6 +39,13 @@ router.post("/", async (req: AuthedRequest, res) => {
         create: { userId: req.userId!, role: "ADMIN" },
       },
     },
+  });
+
+  await logActivity({
+    organizationId: org.id,
+    userId: req.userId!,
+    action: ActivityAction.ORGANIZATION_CREATED,
+    metadata: { name: org.name, slug: org.slug },
   });
 
   res.status(201).json(org);

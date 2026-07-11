@@ -68,3 +68,30 @@ export async function resolveOrgFromProject(
   req.organizationId = project.organizationId;
   next();
 }
+
+// Same pattern for Comment-scoped routes (edit/delete a single comment).
+// Derives org via Comment -> Issue -> organizationId, mirroring how
+// resolveOrgFromIssue never trusts a client-supplied organizationId.
+export async function resolveOrgFromComment(
+  req: OrgScopedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const commentId = req.params.commentId;
+
+  if (typeof commentId !== "string") {
+    return res.status(400).json({ error: "Invalid comment id" });
+  }
+
+  const comment = await prisma.comment.findUnique({
+    where: { id: commentId },
+    select: { issue: { select: { organizationId: true } } },
+  });
+
+  if (!comment) {
+    return res.status(404).json({ error: "Comment not found" });
+  }
+
+  req.organizationId = comment.issue.organizationId;
+  next();
+}

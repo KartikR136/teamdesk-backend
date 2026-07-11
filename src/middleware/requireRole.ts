@@ -6,11 +6,15 @@ import { Role, Membership } from "@prisma/client";
 
 const MEMBERSHIP_CACHE_TTL_SECONDS = 60;
 
+function membershipCacheKey(userId: string, organizationId: string): string {
+  return `membership:${userId}:${organizationId}`;
+}
+
 async function getMembership(
   userId: string,
   organizationId: string,
 ): Promise<Membership | null> {
-  const cacheKey = `membership:${userId}:${organizationId}`;
+  const cacheKey = membershipCacheKey(userId, organizationId);
 
   const cached = await redis.get(cacheKey);
   if (cached) {
@@ -32,6 +36,23 @@ async function getMembership(
 
   return membership;
 }
+
+// Call this immediately after ANY mutation that changes a user's membership
+// state in an org: role change, removal, or a new membership being created
+// (e.g. accepting an invitation). Without this, the mutation is correct in
+// the database but the NEXT request from that user could still read a
+// stale cached role/negative-membership result for up to 60s.
+//
+// Deliberately narrow: only deletes the one (userId, organizationId) key
+// affected by the mutation that just happened — not a broader flush — so
+// this stays cheap and doesn't clear unrelated cached memberships.
+export async function invalidateMembershipCache(
+  userId: string,
+  organizationId: string,
+): Promise<void> {
+  await redis.del(membershipCacheKey(userId, organizationId));
+}
+
 // Role hierarchy — higher number = more permissions.
 // Used so "requireRole(MEMBER)" also allows ADMIN/MANAGER, not just exact match.
 const ROLE_RANK: Record<Role, number> = {
