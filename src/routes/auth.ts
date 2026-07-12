@@ -20,19 +20,23 @@ const signupSchema = z.object({
 const REFRESH_TOKEN_TTL_DAYS = 30;
 
 function refreshCookieOptions() {
+  const isProd = process.env.NODE_ENV === "production";
+
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production", // HTTPS-only in prod; relaxed for local http dev
-    sameSite: "lax" as const,
+    secure: isProd,
+    sameSite: isProd ? ("none" as const) : ("lax" as const),
     maxAge: REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
   };
 }
 
 function accessCookieOptions() {
+  const isProd = process.env.NODE_ENV === "production";
+
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
+    secure: isProd,
+    sameSite: isProd ? ("none" as const) : ("lax" as const),
     maxAge: 15 * 60 * 1000,
   };
 }
