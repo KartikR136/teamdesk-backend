@@ -149,8 +149,8 @@ router.post("/logout", async (req, res) => {
       data: { revokedAt: new Date() },
     });
   }
-  res.clearCookie("accessToken");
-  res.clearCookie("refreshToken");
+  res.clearCookie("accessToken", accessCookieOptions());
+  res.clearCookie("refreshToken", refreshCookieOptions());
   res.json({ status: "logged out" });
 });
 
