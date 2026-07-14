@@ -109,6 +109,39 @@ router.patch(
     res.json(updated);
   },
 );
+// GET /issues/:issueId — returns the full issue plus its comments in one
+// response, so the frontend detail page needs a single fetch instead of
+// a waterfall (fetch issue, then fetch comments).
+router.get(
+  "/issues/:issueId",
+  resolveOrgFromIssue,
+  requireRole("VIEWER"),
+  async (req: OrgScopedRequest, res) => {
+    const issueId = req.params.issueId;
+
+    if (typeof issueId !== "string") {
+      return res.status(400).json({ error: "Invalid issue id" });
+    }
+
+    const issue = await prisma.issue.findUnique({
+      where: { id: issueId },
+      include: {
+        creator: { select: { id: true, name: true } },
+        assignee: { select: { id: true, name: true } },
+        comments: {
+          orderBy: { createdAt: "desc" },
+          include: { author: { select: { id: true, name: true } } },
+        },
+      },
+    });
+
+    if (!issue) {
+      return res.status(404).json({ error: "Issue not found" });
+    }
+
+    res.json(issue);
+  },
+);
 
 router.get(
   "/organizations/:organizationId/issues",
