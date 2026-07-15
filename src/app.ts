@@ -12,6 +12,7 @@ import invitationsRouter from "./routes/invitations";
 import membersRouter from "./routes/members";
 import { errorHandler } from "./middleware/errorHandler";
 import { authLimiter, generalLimiter } from "./middleware/rateLimiters";
+import demoAttacksRouter from "./routes/demoAttacks";
 
 export const app = express();
 
@@ -57,5 +58,12 @@ app.use("/api", commentsRouter); // has full nested paths already (issues/:id/co
 app.use("/api", activityRouter); // has full nested path already (organizations/:id/activity)
 app.use("/api", invitationsRouter); // has full nested paths already (organizations/:id/invitations, invitations/me, invitations/:id/accept|reject)
 app.use("/api", membersRouter); // has full nested paths already (organizations/:id/members, .../members/:userId)
+
+// Attack-console demo routes — only exist at all when DEMO_MODE is set.
+// See THREAT_MODEL.md for why this must never be enabled against a
+// database containing real tenant data.
+if (process.env.DEMO_MODE === "true") {
+  app.use("/api/_demo", demoAttacksRouter);
+}
 
 app.use(errorHandler);

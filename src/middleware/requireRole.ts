@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { AuthedRequest } from "./requireAuth";
 import { redis } from "../lib/redis";
 import { Role, Membership } from "@prisma/client";
+import { logAuthEvent } from "../lib/logAuthEvent";
 
 const MEMBERSHIP_CACHE_TTL_SECONDS = 60;
 
@@ -84,12 +85,36 @@ export function requireRole(minRole: Role) {
     const membership = await getMembership(req.userId, req.organizationId);
 
     if (!membership) {
+      logAuthEvent({
+        event: "ROLE_DENIED",
+        statusCode: 403,
+        reason: "NOT_A_MEMBER",
+        route: req.originalUrl,
+        method: req.method,
+        organizationId: req.organizationId,
+        userId: req.userId,
+        requiredRole: minRole,
+        actualRole: null,
+        requestId: null,
+      });
       return res
         .status(403)
         .json({ error: "Not a member of this organization" });
     }
 
     if (ROLE_RANK[membership.role] < ROLE_RANK[minRole]) {
+      logAuthEvent({
+        event: "ROLE_DENIED",
+        statusCode: 403,
+        reason: "INSUFFICIENT_ROLE",
+        route: req.originalUrl,
+        method: req.method,
+        organizationId: req.organizationId,
+        userId: req.userId,
+        requiredRole: minRole,
+        actualRole: membership.role,
+        requestId: null,
+      });
       return res.status(403).json({ error: "Insufficient permissions" });
     }
 

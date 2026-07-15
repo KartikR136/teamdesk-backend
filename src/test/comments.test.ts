@@ -1,11 +1,13 @@
 import request from "supertest";
 import { app } from "../app";
+import { prisma } from "../lib/prisma";
 import { extractCookie } from "./testUtils";
 
 // Same shared-authLimiter caveat as pagination.test.ts: signup+login+refresh
 // share one rate-limit bucket (10 req/15min across all three combined).
-// This file uses only 3 signupAndLogin pairs (6 requests) to stay well
-// under that budget.
+// This file's three tests now total 9 requests (2 + 4 + 3) — still under
+// budget, but close enough that a fourth test here should reuse an
+// existing cookie rather than add a new signupAndLogin pair.
 
 async function signupAndLogin(email: string): Promise<string> {
   await request(app).post("/api/auth/signup").send({
@@ -179,5 +181,66 @@ describe("comments", () => {
       .delete(`/api/comments/${commentId}`)
       .set("Cookie", [outsiderCookie]);
     expect(deleteAttempt.status).toBe(403);
+  });
+
+  it("blocks a same-org MEMBER (not the author, not an admin) from editing or deleting someone else's comment", async () => {
+    // Distinct from the non-member test above: this user has a REAL
+    // membership in the same org as the comment's author — the
+    // authorization boundary here is an in-app ownership check (author OR
+    // admin), not requireRole's membership check, and it has no coverage
+    // anywhere else in this suite.
+    const ownerCookie = await signupAndLogin("comments-owner2@example.com");
+    const orgId = await createOrg(ownerCookie, "Ownership Org");
+    const projectId = await createProject(
+      ownerCookie,
+      orgId,
+      "Ownership Project",
+    );
+    const issueId = await createIssue(
+      ownerCookie,
+      orgId,
+      projectId,
+      "Ownership Issue",
+    );
+
+    const commentRes = await request(app)
+      .post(`/api/issues/${issueId}/comments`)
+      .set("Cookie", [ownerCookie])
+      .send({ body: "Owner's comment" });
+    expect(commentRes.status).toBe(201);
+    const commentId = commentRes.body.id as string;
+
+    // Second user, seeded as a real MEMBER of the SAME org — not an
+    // outsider. Seeded directly via Prisma rather than the invite/accept
+    // flow, same pattern members.test.ts already uses, to keep this
+    // file's rate-limit budget small.
+    const otherSignup = await request(app).post("/api/auth/signup").send({
+      email: "comments-peer@example.com",
+      password: "correctpassword",
+      name: "Peer User",
+    });
+    const peerUserId = otherSignup.body.id as string;
+    await prisma.membership.create({
+      data: { userId: peerUserId, organizationId: orgId, role: "MEMBER" },
+    });
+
+    // Signup already sets session cookies (see issueTokensAndSetCookies in
+    // auth.ts) — no separate login call needed, saving a request against
+    // this file's shared authLimiter budget.
+    const peerCookie = extractCookie(
+      otherSignup.headers["set-cookie"],
+      "accessToken",
+    );
+
+    const editAttempt = await request(app)
+      .patch(`/api/comments/${commentId}`)
+      .set("Cookie", [peerCookie])
+      .send({ body: "Attempted hijack by a real org peer" });
+    expect(editAttempt.status).toBe(403);
+
+    const deleteAttempt2 = await request(app)
+      .delete(`/api/comments/${commentId}`)
+      .set("Cookie", [peerCookie]);
+    expect(deleteAttempt2.status).toBe(403);
   });
 });
