@@ -8,5 +8,11 @@ module.exports = {
   testEnvironment: "node",
   setupFilesAfterEnv: ["<rootDir>/src/test/setup.ts"],
   testMatch: ["**/*.test.ts"],
-  testTimeout: 10000,
+  // 30s, not 10s: this suite makes real, sequential, unmocked round trips
+  // to Postgres per TESTING.md's own design. Against a serverless DB
+  // (Neon) that can cold-start/scale-to-zero when idle, a handful of
+  // consecutive awaited queries in one test can occasionally exceed 10s
+  // even though every query eventually succeeds — this isn't slack for a
+  // broken test, it's headroom for the database's worst-case latency.
+  testTimeout: 30000,
 };

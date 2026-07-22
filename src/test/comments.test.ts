@@ -158,29 +158,31 @@ describe("comments", () => {
     expect(commentRes.status).toBe(201);
     const commentId = commentRes.body.id as string;
 
-    // Outsider has no membership in this org at all — requireRole should
-    // reject before any ownership check is reached.
+    // Outsider has no membership in this org at all. Every route below is
+    // reached through a resource-derived resolver (resolveOrgFromIssue /
+    // resolveOrgFromComment), so requireRole now returns 404, not 403 —
+    // see requireRole.ts's notFoundIfNoMembership and THREAT_MODEL.md.
     const readAttempt = await request(app)
       .get(`/api/issues/${issueId}/comments`)
       .set("Cookie", [outsiderCookie]);
-    expect(readAttempt.status).toBe(403);
+    expect(readAttempt.status).toBe(404);
 
     const writeAttempt = await request(app)
       .post(`/api/issues/${issueId}/comments`)
       .set("Cookie", [outsiderCookie])
       .send({ body: "Trying to comment from outside" });
-    expect(writeAttempt.status).toBe(403);
+    expect(writeAttempt.status).toBe(404);
 
     const editAttempt = await request(app)
       .patch(`/api/comments/${commentId}`)
       .set("Cookie", [outsiderCookie])
       .send({ body: "Hijacked edit" });
-    expect(editAttempt.status).toBe(403);
+    expect(editAttempt.status).toBe(404);
 
     const deleteAttempt = await request(app)
       .delete(`/api/comments/${commentId}`)
       .set("Cookie", [outsiderCookie]);
-    expect(deleteAttempt.status).toBe(403);
+    expect(deleteAttempt.status).toBe(404);
   });
 
   it("blocks a same-org MEMBER (not the author, not an admin) from editing or deleting someone else's comment", async () => {

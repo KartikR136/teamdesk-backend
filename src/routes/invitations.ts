@@ -15,6 +15,7 @@ import {
   paginateResults,
 } from "../lib/pagination";
 import { logActivity, ActivityAction } from "../lib/activityLog";
+import { notifyMany, NotificationType } from "../lib/notifications";
 
 const router = Router();
 router.use(requireAuth);
@@ -244,6 +245,27 @@ router.post(
       action: ActivityAction.MEMBER_JOINED,
       metadata: { role: invitation.role },
     });
+
+    // Dashboard ORG_EVENT notification — tell existing admins someone
+    // joined. Deliberately admins only (not every member): a join is
+    // primarily an admin-relevant event, and notifying an entire org on
+    // every new hire would make the notification feed noisy fast.
+    // Awaited (not fire-and-forget) — see notify() call sites in
+    // issues.ts/comments.ts for why.
+    const admins = await prisma.membership.findMany({
+      where: { organizationId: invitation.organizationId, role: "ADMIN" },
+      select: { userId: true },
+    });
+    await notifyMany(
+      admins.map((a: { userId: string }) => a.userId),
+      {
+        organizationId: invitation.organizationId,
+        type: NotificationType.ORG_EVENT,
+        message: `${user.name} joined the organization`,
+        actorId: user.id,
+      },
+      user.id,
+    );
 
     res.status(201).json(membership);
   },

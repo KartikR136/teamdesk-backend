@@ -24,7 +24,7 @@ export type AuthDenialReason =
 export interface AuthEvent {
   event: AuthEventName;
   decision: "DENY";
-  statusCode: 401 | 403;
+  statusCode: 401 | 403 | 404;
   reason: AuthDenialReason;
   route: string;
   method: string;

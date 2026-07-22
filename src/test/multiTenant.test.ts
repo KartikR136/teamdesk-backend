@@ -73,12 +73,16 @@ describe("Multi-tenant isolation", () => {
       .set("Cookie", cookiesA)
       .send({ title: "Issue", projectId: project.body.id });
 
-    // User B has no membership in Org A at all.
+    // User B has no membership in Org A at all. resolveOrgFromIssue is a
+    // resource-derived resolver, so this now correctly returns 404 (not
+    // 403) — see requireRole.ts's notFoundIfNoMembership and
+    // THREAT_MODEL.md for why param-derived and resource-derived routes
+    // are deliberately handled differently.
     const res = await request(app)
       .patch(`/api/issues/${issue.body.id}`)
       .set("Cookie", cookiesB)
       .send({ status: "DONE" });
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 });

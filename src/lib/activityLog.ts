@@ -13,6 +13,14 @@ export const ActivityAction = {
   MEMBER_JOINED: "MEMBER_JOINED",
   MEMBER_ROLE_CHANGED: "MEMBER_ROLE_CHANGED",
   MEMBER_REMOVED: "MEMBER_REMOVED",
+  // Decision Log — mirrors the ISSUE_* naming convention exactly. Status
+  // changes get their own action (not folded into DECISION_UPDATED) since
+  // a status transition (e.g. ACCEPTED -> SUPERSEDED) is a distinct,
+  // audit-worthy event on this resource in a way a title edit isn't.
+  DECISION_CREATED: "DECISION_CREATED",
+  DECISION_UPDATED: "DECISION_UPDATED",
+  DECISION_STATUS_CHANGED: "DECISION_STATUS_CHANGED",
+  DECISION_DELETED: "DECISION_DELETED",
 } as const;
 
 export type ActivityActionType =
@@ -23,6 +31,9 @@ interface LogActivityParams {
   userId: string;
   action: ActivityActionType;
   issueId?: string;
+  // Additive, optional — mirrors issueId. Existing callers are entirely
+  // unaffected since this field is never required.
+  decisionId?: string;
   metadata?: Prisma.InputJsonValue;
 }
 // Called explicitly at the end of each mutation's route handler — not
@@ -42,6 +53,7 @@ export async function logActivity(params: LogActivityParams): Promise<void> {
         userId: params.userId,
         action: params.action,
         issueId: params.issueId,
+        decisionId: params.decisionId,
         metadata: params.metadata,
       },
     });

@@ -13,6 +13,10 @@ import {
   paginateResults,
 } from "../lib/pagination";
 import { logActivity, ActivityAction } from "../lib/activityLog";
+import { notify, NotificationType } from "../lib/notifications";
+import { DashboardRepository } from "../modules/dashboard/repository/dashboard.repository";
+
+const dashboardRepository = new DashboardRepository();
 
 const router = Router();
 router.use(requireAuth);
@@ -21,6 +25,9 @@ const createIssueSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   projectId: z.string().uuid(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
+  dueDate: z.string().datetime().optional(),
+  estimatePoints: z.number().int().min(0).optional(),
 });
 
 router.post(
@@ -50,6 +57,9 @@ router.post(
         projectId: parsed.data.projectId,
         organizationId: req.organizationId!,
         creatorId: req.userId!,
+        priority: parsed.data.priority,
+        dueDate: parsed.data.dueDate ? new Date(parsed.data.dueDate) : undefined,
+        estimatePoints: parsed.data.estimatePoints,
       },
     });
 
@@ -69,13 +79,16 @@ const updateIssueSchema = z.object({
   title: z.string().min(1).optional(),
   description: z.string().optional(),
   status: z.enum(["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"]).optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
+  dueDate: z.string().datetime().nullable().optional(),
+  estimatePoints: z.number().int().min(0).nullable().optional(),
   assigneeId: z.string().uuid().nullable().optional(),
 });
 
 router.patch(
   "/issues/:issueId",
   resolveOrgFromIssue, // derives organizationId from the issue itself — your exact answer, implemented
-  requireRole("MEMBER"),
+  requireRole("MEMBER", { notFoundIfNoMembership: true }),
   async (req: OrgScopedRequest, res) => {
     const parsed = updateIssueSchema.safeParse(req.body);
     if (!parsed.success)
@@ -87,9 +100,28 @@ router.patch(
       return res.status(400).json({ error: "Invalid issue id" });
     }
 
+    // Fetched before the update purely to diff old vs. new assignee/status
+    // for the notification hook below — does not change ISSUE_UPDATED's
+    // own logging (still one event, not split into field-level events; see
+    // note below).
+    const before = await prisma.issue.findUnique({
+      where: { id: issueId },
+      select: { assigneeId: true, status: true, title: true },
+    });
+
+    const updateData = {
+      ...parsed.data,
+      dueDate:
+        parsed.data.dueDate === undefined
+          ? undefined
+          : parsed.data.dueDate === null
+            ? null
+            : new Date(parsed.data.dueDate),
+    };
+
     const updated = await prisma.issue.update({
       where: { id: issueId },
-      data: parsed.data,
+      data: updateData,
     });
 
     // Logged as a single ISSUE_UPDATED event carrying whichever fields the
@@ -106,6 +138,52 @@ router.patch(
       metadata: parsed.data,
     });
 
+    // Dashboard notifications — deliberately separate from the ISSUE_UPDATED
+    // ActivityLog entry above (see notifications.ts: ActivityLog records
+    // the actor, Notification records the recipient, and those are
+    // frequently different people). Fire-and-forget; a failure here never
+    // fails the request. They're awaited (not fire-and-forget) because
+    // notify() already catches its own errors internally (see
+    // src/lib/notifications.ts) — awaiting just makes the write complete
+    // before the response, which matters under the test suite's
+    // shared-process, shared-connection-pool execution (a truly
+    // un-awaited write can still be in flight when a later test's
+    // beforeEach truncates tables, causing FK errors and unrelated
+    // timeouts elsewhere in the run).
+    if (before) {
+      const newlyAssignedId = parsed.data.assigneeId;
+      if (
+        newlyAssignedId &&
+        newlyAssignedId !== before.assigneeId &&
+        newlyAssignedId !== req.userId
+      ) {
+        await notify({
+          recipientId: newlyAssignedId,
+          organizationId: req.organizationId!,
+          type: NotificationType.ASSIGNMENT,
+          message: `You were assigned to "${before.title}"`,
+          issueId: updated.id,
+          actorId: req.userId!,
+        });
+      }
+
+      if (
+        parsed.data.status &&
+        parsed.data.status !== before.status &&
+        updated.assigneeId &&
+        updated.assigneeId !== req.userId
+      ) {
+        await notify({
+          recipientId: updated.assigneeId,
+          organizationId: req.organizationId!,
+          type: NotificationType.STATUS_CHANGE,
+          message: `"${updated.title}" changed to ${updated.status}`,
+          issueId: updated.id,
+          actorId: req.userId!,
+        });
+      }
+    }
+
     res.json(updated);
   },
 );
@@ -115,7 +193,7 @@ router.patch(
 router.get(
   "/issues/:issueId",
   resolveOrgFromIssue,
-  requireRole("VIEWER"),
+  requireRole("VIEWER", { notFoundIfNoMembership: true }),
   async (req: OrgScopedRequest, res) => {
     const issueId = req.params.issueId;
 
@@ -138,6 +216,18 @@ router.get(
     if (!issue) {
       return res.status(404).json({ error: "Issue not found" });
     }
+
+    // Dashboard "Recently Viewed Issues" hook. Awaited (not fire-and-forget)
+    // — errors are still swallowed via .catch() below so this never turns
+    // a successful GET into an error, but awaiting it means the write is
+    // guaranteed to complete before the response, avoiding cross-test races
+    // and connection-pool pressure under the test suite's shared-process
+    // execution (see the identical note on notify() calls in PATCH above).
+    await dashboardRepository
+      .recordIssueView(req.userId!, issue.id)
+      .catch((err) =>
+        console.error("Failed to record recently-viewed issue:", err),
+      );
 
     res.json(issue);
   },

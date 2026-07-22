@@ -7,6 +7,256 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Organization {
+  id           String        @id @default(uuid())
+  name         String
+  slug         String        @unique
+  createdAt    DateTime      @default(now())
+  activityLogs ActivityLog[]
+  decisions    DecisionLog[]
+  invitations  Invitation[]
+  issues       Issue[]
+  memberships  Membership[]
+  projects     Project[]
+  notifications Notification[]
+}
+
+model User {
+  id                  String               @id @default(uuid())
+  email               String               @unique
+  passwordHash        String
+  name                String
+  createdAt           DateTime             @default(now())
+  activityLogs        ActivityLog[]
+  comments            Comment[]
+  decisions           DecisionLog[]
+  sentInvitations     Invitation[]         @relation("InvitationsSent")
+  assignedIssues      Issue[]              @relation("IssueAssignee")
+  createdIssues       Issue[]              @relation("IssueCreator")
+  memberships         Membership[]
+  passwordResetTokens PasswordResetToken[]
+  refreshTokens       RefreshToken[]
+  notificationsReceived Notification[] @relation("NotificationRecipient")
+  notificationsCaused   Notification[] @relation("NotificationActor")
+  recentlyViewedIssues RecentlyViewedIssue[]
+}
+
+model Membership {
+  id             String       @id @default(uuid())
+  role           Role         @default(MEMBER)
+  createdAt      DateTime     @default(now())
+  userId         String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model Project {
+  id             String        @id @default(uuid())
+  name           String
+  description    String?
+  createdAt      DateTime      @default(now())
+  organizationId String
+  decisions      DecisionLog[]
+  issues         Issue[]
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model Issue {
+  id             String                 @id @default(uuid())
+  title          String
+  description    String?
+  status         IssueStatus            @default(TODO)
+  priority       IssuePriority          @default(MEDIUM)
+  dueDate        DateTime?
+  estimatePoints Int?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  organizationId String
+  projectId      String
+  creatorId      String
+  assigneeId     String?
+  activityLogs   ActivityLog[]
+  comments       Comment[]
+  decisionLinks  DecisionRelatedIssue[]
+  notifications  Notification[]
+  recentlyViewedBy RecentlyViewedIssue[]
+  assignee       User?                  @relation("IssueAssignee", fields: [assigneeId], references: [id])
+  creator        User                   @relation("IssueCreator", fields: [creatorId], references: [id])
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, createdAt])
+  @@index([projectId])
+  @@index([assigneeId])
+  @@index([assigneeId, dueDate])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  body      String
+  createdAt DateTime @default(now())
+  issueId   String
+  authorId  String
+  updatedAt DateTime @updatedAt
+  author    User     @relation(fields: [authorId], references: [id])
+  issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+}
+
+model ActivityLog {
+  id             String       @id @default(uuid())
+  action         String
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  organizationId String
+  userId         String
+  issueId        String?
+  decisionId     String?
+  decision       DecisionLog? @relation(fields: [decisionId], references: [id])
+  issue          Issue?       @relation(fields: [issueId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@index([organizationId, createdAt])
+  @@index([issueId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Invitation {
+  id             String           @id @default(uuid())
+  email          String
+  role           Role             @default(MEMBER)
+  status         InvitationStatus @default(PENDING)
+  token          String           @unique
+  expiresAt      DateTime
+  createdAt      DateTime         @default(now())
+  organizationId String
+  invitedById    String
+  invitedBy      User             @relation("InvitationsSent", fields: [invitedById], references: [id])
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+model DecisionLog {
+  id               String                 @id @default(uuid())
+  title            String
+  problemStatement String
+  context          String
+  alternatives     String
+  chosenSolution   String
+  tradeoffs        String
+  consequences     String?
+  status           DecisionStatus         @default(DRAFT)
+  reviewDate       DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  organizationId   String
+  authorId         String
+  projectId        String?
+  activityLogs     ActivityLog[]
+  author           User                   @relation(fields: [authorId], references: [id])
+  organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project          Project?               @relation(fields: [projectId], references: [id])
+  relatedIssues    DecisionRelatedIssue[]
+
+  @@index([organizationId])
+  @@index([organizationId, createdAt])
+}
+
+model DecisionRelatedIssue {
+  id         String      @id @default(uuid())
+  decisionId String
+  issueId    String
+  decision   DecisionLog @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  issue      Issue       @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([decisionId, issueId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Backs the dashboard's "Notifications" section. Distinct from ActivityLog
+// on purpose: ActivityLog records who performed an action (the actor) for
+// audit purposes, while a Notification records who should be informed about
+// it (the recipient) — often a different person, sometimes several. Deriving
+// "my notifications" from ActivityLog.userId would show people their own
+// actions, which is not what a notification feed is for.
+model Notification {
+  id             String           @id @default(uuid())
+  type           NotificationType
+  message        String
+  read           Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  recipientId    String
+  actorId        String?
+  organizationId String
+  issueId        String?
+  recipient      User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor          User?            @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  issue          Issue?           @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  // Recipient's own feed, newest first — the dashboard's actual read pattern.
+  @@index([recipientId, createdAt])
+  @@index([organizationId])
+}
+
+// Backs the dashboard's "Recently Viewed Issues" section. One row per
+// (user, issue) pair — re-viewing an issue updates viewedAt rather than
+// inserting a duplicate row, so "last 10" is a simple, cheap query instead
+// of needing de-duplication logic at read time.
+model RecentlyViewedIssue {
+  id       String   @id @default(uuid())
+  userId   String
+  issueId  String
+  viewedAt DateTime @default(now()) @updatedAt
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  issue    Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, issueId])
+  @@index([userId, viewedAt])
+}
+
+enum NotificationType {
+  MENTION
+  COMMENT
+  ASSIGNMENT
+  STATUS_CHANGE
+  ORG_EVENT
+}
+
 enum Role {
   ADMIN
   MANAGER
@@ -35,157 +285,9 @@ enum InvitationStatus {
   EXPIRED
 }
 
-model Organization {
-  id        String   @id @default(uuid())
-  name      String
-  slug      String   @unique // for clean URLs later e.g. /org/acme-inc
-  createdAt DateTime @default(now())
-
-  memberships  Membership[]
-  projects     Project[]
-  issues       Issue[]
-  activityLogs ActivityLog[]
-  invitations  Invitation[]
-}
-
-model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  name         String
-  createdAt    DateTime @default(now())
-
-  memberships     Membership[]
-  createdIssues   Issue[]        @relation("IssueCreator")
-  assignedIssues  Issue[]        @relation("IssueAssignee")
-  comments        Comment[]
-  activityLogs    ActivityLog[]
-  refreshTokens   RefreshToken[]
-  sentInvitations Invitation[]   @relation("InvitationsSent")
-}
-
-// The join table. This is the crux of multi-tenant role handling.
-model Membership {
-  id        String   @id @default(uuid())
-  role      Role     @default(MEMBER)
-  createdAt DateTime @default(now())
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  // A user can only have ONE membership (one role) per organization.
-  @@unique([userId, organizationId])
-  @@index([organizationId])
-}
-
-model Project {
-  id          String   @id @default(uuid())
-  name        String
-  description String?
-  createdAt   DateTime @default(now())
-
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  issues Issue[]
-
-  @@index([organizationId])
-}
-
-model Issue {
-  id          String        @id @default(uuid())
-  title       String
-  description String?
-  status      IssueStatus   @default(TODO)
-  priority    IssuePriority @default(MEDIUM)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-
-  // Direct tenant scoping — see explanation above. Deliberately denormalized.
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  projectId String
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  creatorId String
-  creator   User   @relation("IssueCreator", fields: [creatorId], references: [id])
-
-  assigneeId String?
-  assignee   User?   @relation("IssueAssignee", fields: [assigneeId], references: [id])
-
-  comments     Comment[]
-  activityLogs ActivityLog[]
-
-  @@index([organizationId])
-  @@index([projectId])
-  @@index([assigneeId])
-}
-
-model Comment {
-  id        String   @id @default(uuid())
-  body      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  issueId String
-  issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
-
-  authorId String
-  author   User   @relation(fields: [authorId], references: [id])
-
-  @@index([issueId])
-}
-
-model ActivityLog {
-  id        String   @id @default(uuid())
-  action    String // e.g. "ISSUE_CREATED", "ISSUE_STATUS_CHANGED", "MEMBER_INVITED"
-  metadata  Json? // flexible field for action-specific details (old status, new status, etc.)
-  createdAt DateTime @default(now())
-
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id])
-
-  issueId String?
-  issue   Issue?  @relation(fields: [issueId], references: [id], onDelete: SetNull)
-
-  @@index([organizationId])
-  @@index([issueId])
-}
-
-model RefreshToken {
-  id        String    @id @default(uuid())
-  tokenHash String    @unique // never store raw tokens — see explanation below
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime  @default(now())
-
-  @@index([userId])
-}
-
-model Invitation {
-  id        String           @id @default(uuid())
-  email     String
-  role      Role             @default(MEMBER)
-  status    InvitationStatus @default(PENDING)
-  token     String           @unique // opaque, unguessable — reserved for a future emailed accept-link; not used by any endpoint yet
-  expiresAt DateTime
-  createdAt DateTime         @default(now())
-
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  invitedById String
-  invitedBy   User   @relation("InvitationsSent", fields: [invitedById], references: [id])
-
-  @@index([organizationId])
-  @@index([email])
+enum DecisionStatus {
+  DRAFT
+  ACCEPTED
+  SUPERSEDED
+  ARCHIVED
 }

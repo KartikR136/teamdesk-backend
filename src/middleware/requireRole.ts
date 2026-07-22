@@ -68,10 +68,32 @@ export interface OrgScopedRequest extends AuthedRequest {
   membershipRole?: Role;
 }
 
+export interface RequireRoleOptions {
+  // Set ONLY by routes using a resource-derived resolver (resolveOrgFromIssue/
+  // Project/Comment/Decision) — never by resolveOrgFromParam routes.
+  //
+  // Why this matters: for a param-derived route, the client already supplied
+  // the organizationId in the URL, so confirming "you're not a member" (403)
+  // reveals nothing they didn't already state themselves. For a resource-
+  // derived route (e.g. GET /issues/:issueId), the client only supplied a
+  // resource ID — a 403 would confirm "this resource exists, in some org,
+  // you're just not in it," while a 404 reveals nothing about whether the
+  // resource exists anywhere at all. API.md has documented 404 as the
+  // intended behavior here since before this fix; this flag is what makes
+  // the code actually match that documentation instead of returning a
+  // uniform 403 regardless of how org context was resolved.
+  //
+  // Deliberately does NOT change the "insufficient role" branch below —
+  // that only fires once a real Membership was already found, so there's
+  // no existence-of-resource ambiguity left to protect; a genuine member
+  // with too low a rank still correctly gets 403.
+  notFoundIfNoMembership?: boolean;
+}
+
 // This does NOT read organizationId from the client. It reads it from
 // whatever the route-specific resource loader already determined and
 // attached to the request (see issues.ts for how that happens).
-export function requireRole(minRole: Role) {
+export function requireRole(minRole: Role, options: RequireRoleOptions = {}) {
   return async (req: OrgScopedRequest, res: Response, next: NextFunction) => {
     if (!req.userId) {
       return res.status(401).json({ error: "Not authenticated" });
@@ -87,7 +109,7 @@ export function requireRole(minRole: Role) {
     if (!membership) {
       logAuthEvent({
         event: "ROLE_DENIED",
-        statusCode: 403,
+        statusCode: options.notFoundIfNoMembership ? 404 : 403,
         reason: "NOT_A_MEMBER",
         route: req.originalUrl,
         method: req.method,
@@ -97,6 +119,16 @@ export function requireRole(minRole: Role) {
         actualRole: null,
         requestId: null,
       });
+
+      if (options.notFoundIfNoMembership) {
+        // Deliberately generic — must be indistinguishable from "this
+        // resource genuinely doesn't exist anywhere," which is exactly
+        // what resolveOrgFromIssue/Project/Comment/Decision themselves
+        // return when the row truly doesn't exist. Do not add org- or
+        // resource-specific detail to this message.
+        return res.status(404).json({ error: "Not found" });
+      }
+
       return res
         .status(403)
         .json({ error: "Not a member of this organization" });

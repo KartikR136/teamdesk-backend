@@ -92,23 +92,53 @@ const scenarios: Scenario[] = [
 
       const { status } = await callApi(`/api/issues/${orgBIssue.id}`, cookie);
 
-      // Access is correctly denied either way (403 or 404) — the invariant
-      // holds. NOTE: API.md documents 404 here specifically to avoid
-      // confirming a resource exists in another org; requireRole currently
-      // returns 403 uniformly whenever membership is absent, regardless of
-      // whether org context came from a URL param or a resource lookup.
-      // This is a real, minor discrepancy between docs and code — tracked
-      // in THREAT_MODEL.md's residual risks, not silently "fixed" here.
-      const passed = status === 403 || status === 404;
+      // Previously this scenario accepted 403 OR 404, and THREAT_MODEL.md
+      // named the inconsistency as a residual risk: requireRole returned
+      // a uniform 403 for missing membership regardless of whether org
+      // context came from a URL param or a resource lookup, even though
+      // API.md always documented 404 for the resource-derived case. That
+      // gap is now closed — requireRole's notFoundIfNoMembership option is
+      // set on every resource-derived route, so this scenario now asserts
+      // the single correct outcome, not an either/or.
+      const passed = status === 404;
       return {
         id: "idor-cross-org-issue",
         title: "Cross-org issue access (IDOR)",
         expectedOutcome:
-          "403 or 404 — access denied either way; see THREAT_MODEL.md for a known discrepancy between the two",
+          "404 Not Found — indistinguishable from the issue not existing at all",
         actualOutcome: `Received ${status}`,
         passed,
         mechanism:
-          "resolveOrgFromIssue derived organizationId from the issue's own DB row, then requireRole found no Membership for the requesting user in that org and denied access. (Currently 403, not the 404 that API.md's leak-avoidance rationale describes — see THREAT_MODEL.md.)",
+          "resolveOrgFromIssue derived organizationId from the issue's own DB row, never the client. requireRole then found no Membership for the requesting user in that org and, because this route is resource-derived, returned a generic 404 rather than a 403 that would confirm the issue exists in some other org.",
+      };
+    },
+  },
+  {
+    id: "idor-cross-org-decision",
+    title: "Cross-org Decision Log access (IDOR)",
+    description:
+      "An Org A admin attempts to fetch a specific Decision Log entry that belongs to Org B, by ID, without ever being a member of Org B.",
+    run: async () => {
+      const orgBDecision = await prisma.decisionLog.findFirstOrThrow({
+        where: { organization: { slug: "demo-org-b" } },
+      });
+      const { cookie } = await cookieHeaderFor("admin-a@demo.teamdesk.dev");
+
+      const { status } = await callApi(
+        `/api/decisions/${orgBDecision.id}`,
+        cookie,
+      );
+
+      const passed = status === 404;
+      return {
+        id: "idor-cross-org-decision",
+        title: "Cross-org Decision Log access (IDOR)",
+        expectedOutcome:
+          "404 Not Found — same guarantee already proven for issues, applied to Decision Log",
+        actualOutcome: `Received ${status}`,
+        passed,
+        mechanism:
+          "resolveOrgFromDecision derived organizationId from the DecisionLog row itself, never the client — identical pattern to resolveOrgFromIssue. requireRole then found no Membership for the requesting user and returned 404, since this route is resource-derived.",
       };
     },
   },

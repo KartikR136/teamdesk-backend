@@ -24,3 +24,16 @@ export function generateRefreshToken(): string {
 export function hashRefreshToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
+
+// Password reset tokens follow the identical pattern to refresh tokens
+// above: a random opaque string is what gets emailed to the user, only
+// its SHA-256 hash is ever stored. No new token architecture invented for
+// this feature — same reasoning as refresh tokens: the token only needs
+// to be a secure, unguessable lookup key, never a carrier of claims.
+export function generatePasswordResetToken(): string {
+  return crypto.randomBytes(64).toString("hex");
+}
+
+export function hashPasswordResetToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}

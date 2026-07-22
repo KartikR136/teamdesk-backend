@@ -95,3 +95,31 @@ export async function resolveOrgFromComment(
   req.organizationId = comment.issue.organizationId;
   next();
 }
+
+// Same pattern for Decision Log-scoped routes (get/edit/delete a single
+// decision). organizationId is denormalized directly onto DecisionLog
+// (same convention as Issue/Project/ActivityLog — see ARCHITECTURE.md),
+// so this is a direct lookup, not a join through another resource.
+export async function resolveOrgFromDecision(
+  req: OrgScopedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const decisionId = req.params.decisionId;
+
+  if (typeof decisionId !== "string") {
+    return res.status(400).json({ error: "Invalid decision id" });
+  }
+
+  const decision = await prisma.decisionLog.findUnique({
+    where: { id: decisionId },
+    select: { organizationId: true },
+  });
+
+  if (!decision) {
+    return res.status(404).json({ error: "Decision not found" });
+  }
+
+  req.organizationId = decision.organizationId;
+  next();
+}

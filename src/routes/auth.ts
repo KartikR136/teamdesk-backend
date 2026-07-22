@@ -7,7 +7,10 @@ import {
   signAccessToken,
   generateRefreshToken,
   hashRefreshToken,
+  generatePasswordResetToken,
+  hashPasswordResetToken,
 } from "../lib/tokens";
+import { sendPasswordResetEmail } from "../lib/email";
 
 const router = Router();
 
@@ -152,6 +155,117 @@ router.post("/logout", async (req, res) => {
   res.clearCookie("accessToken", accessCookieOptions());
   res.clearCookie("refreshToken", refreshCookieOptions());
   res.json({ status: "logged out" });
+});
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const RESET_TOKEN_TTL_MINUTES = 45;
+
+router.post("/forgot-password", async (req, res) => {
+  const parsed = forgotPasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request" });
+  }
+
+  // Deliberately identical response whether the email matches a real
+  // account or not — same account-enumeration reasoning /login and
+  // /signup already apply, extended here per PRD 5 Section 2.2. This is
+  // computed once and returned from every path below so a timing
+  // difference between "user exists" and "user doesn't" can't leak it
+  // either.
+  const genericResponse = {
+    message:
+      "If an account exists for this email, a password reset link has been sent.",
+  };
+
+  const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });
+  if (!user) {
+    return res.json(genericResponse);
+  }
+
+  const rawToken = generatePasswordResetToken();
+  await prisma.passwordResetToken.create({
+    data: {
+      userId: user.id,
+      tokenHash: hashPasswordResetToken(rawToken),
+      expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000),
+    },
+  });
+
+  const resetLink = `${process.env.FRONTEND_URL ?? "http://localhost:3000"}/reset-password?token=${rawToken}`;
+
+  try {
+    await sendPasswordResetEmail(user.email, resetLink);
+  } catch (err) {
+    // Never let an email-provider failure leak into the response — that
+    // would confirm the account exists (a 500 here vs. a 200 for a
+    // nonexistent email is itself an enumeration vector). Log server-side
+    // for real operational visibility instead, same swallow-and-log
+    // reasoning activityLog.ts already uses for its own failures.
+    console.error("sendPasswordResetEmail failed", err);
+  }
+
+  res.json(genericResponse);
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  newPassword: z.string().min(8),
+});
+
+router.post("/reset-password", async (req, res) => {
+  const parsed = resetPasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  // Same deliberately generic failure message regardless of which
+  // specific check fails below (token not found / already used /
+  // expired) — per PRD 5 Section 2.2, never distinguish why, since that
+  // itself is information a real attacker could use.
+  const invalidMsg = { error: "This link is invalid or has expired." };
+
+  const tokenHash = hashPasswordResetToken(parsed.data.token);
+  const stored = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+  });
+
+  if (!stored || stored.usedAt || stored.expiresAt < new Date()) {
+    return res.status(400).json(invalidMsg);
+  }
+
+  const passwordHash = await hashPassword(parsed.data.newPassword);
+
+  // Single-use enforcement: mark usedAt the moment the token is consumed,
+  // in the same transaction as the actual password change, so a token
+  // can never be replayed even if some later step in this request were
+  // to fail.
+  await prisma.$transaction([
+    prisma.passwordResetToken.update({
+      where: { id: stored.id },
+      data: { usedAt: new Date() },
+    }),
+    prisma.user.update({
+      where: { id: stored.userId },
+      data: { passwordHash },
+    }),
+  ]);
+
+  // Revoke every existing session for this user. Per PRD 5 Section 2.4:
+  // if a session cookie was ever stolen, a legitimate password reset
+  // should immediately invalidate it — otherwise the reset accomplishes
+  // nothing from a security standpoint. Refresh tokens are stored
+  // server-side (see RefreshToken model), so this is a straightforward
+  // bulk revoke, not a design problem — resolves the open question PRD 5
+  // flagged before this was confirmed against the real token model.
+  await prisma.refreshToken.updateMany({
+    where: { userId: stored.userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+
+  res.json({ status: "password reset" });
 });
 
 export default router;

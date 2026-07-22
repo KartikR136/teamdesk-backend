@@ -13,6 +13,7 @@ import {
   paginateResults,
 } from "../lib/pagination";
 import { logActivity, ActivityAction } from "../lib/activityLog";
+import { notify, NotificationType } from "../lib/notifications";
 
 const router = Router();
 router.use(requireAuth);
@@ -27,7 +28,7 @@ const bodySchema = z.object({
 router.post(
   "/issues/:issueId/comments",
   resolveOrgFromIssue,
-  requireRole("MEMBER"),
+  requireRole("MEMBER", { notFoundIfNoMembership: true }),
   async (req: OrgScopedRequest, res) => {
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -58,6 +59,38 @@ router.post(
       metadata: { commentId: comment.id },
     });
 
+    // Dashboard COMMENT notifications — notify the issue's assignee and
+    // creator (deduplicated), excluding whoever just wrote the comment.
+    // A single small lookup, not a join we didn't already need: this
+    // route doesn't otherwise fetch the parent issue at all.
+    const issue = await prisma.issue.findUnique({
+      where: { id: issueId },
+      select: { assigneeId: true, creatorId: true, title: true },
+    });
+    if (issue) {
+      const recipients = new Set(
+        [issue.assigneeId, issue.creatorId].filter(
+          (id): id is string => !!id && id !== req.userId,
+        ),
+      );
+      // Awaited (not fire-and-forget) — same reasoning as issues.ts's
+      // notify() calls: notify() swallows its own errors, awaiting just
+      // makes the writes complete before the response instead of racing
+      // with later tests' table truncation.
+      await Promise.all(
+        Array.from(recipients).map((recipientId) =>
+          notify({
+            recipientId,
+            organizationId: req.organizationId!,
+            type: NotificationType.COMMENT,
+            message: `New comment on "${issue.title}"`,
+            issueId,
+            actorId: req.userId!,
+          }),
+        ),
+      );
+    }
+
     res.status(201).json(comment);
   },
 );
@@ -66,7 +99,7 @@ router.post(
 router.get(
   "/issues/:issueId/comments",
   resolveOrgFromIssue,
-  requireRole("VIEWER"),
+  requireRole("VIEWER", { notFoundIfNoMembership: true }),
   async (req: OrgScopedRequest, res) => {
     const issueId = req.params.issueId;
     if (typeof issueId !== "string") {
@@ -107,7 +140,7 @@ router.get(
 router.patch(
   "/comments/:commentId",
   resolveOrgFromComment,
-  requireRole("VIEWER"),
+  requireRole("VIEWER", { notFoundIfNoMembership: true }),
   async (req: OrgScopedRequest, res) => {
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -164,7 +197,7 @@ router.patch(
 router.delete(
   "/comments/:commentId",
   resolveOrgFromComment,
-  requireRole("VIEWER"),
+  requireRole("VIEWER", { notFoundIfNoMembership: true }),
   async (req: OrgScopedRequest, res) => {
     const commentId = req.params.commentId;
     if (typeof commentId !== "string") {
