@@ -51,6 +51,11 @@ export interface DashboardNotificationDto {
 }
 
 export type PRReviewUrgency = "low" | "medium" | "high";
+export type PRReviewStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "CHANGES_REQUESTED"
+  | "COMMENTED";
 
 export interface PullRequestDto {
   id: string;
@@ -63,6 +68,25 @@ export interface PullRequestDto {
   mergeStatus: "clean" | "conflicts" | "checks_failing";
   urgency: PRReviewUrgency;
   url: string;
+  // Everything below is additive — same convention MeetingDto's optional
+  // fields used. Original frontend PullRequest type only declared the
+  // fields above (backed by GitHubPullRequestProvider, which never
+  // returned real data). These extra fields are all optional so existing
+  // widget code keeps working untouched; the new PullRequestsCard review
+  // actions and /dashboard/pull-requests pages opt into them.
+  organizationId?: string;
+  organizationName?: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  targetBranch?: string;
+  status?: "OPEN" | "MERGED" | "CLOSED";
+  linesAdded?: number;
+  linesRemoved?: number;
+  /** This viewer's own review status for this PR, if they're a requested reviewer. */
+  myReviewStatus?: PRReviewStatus;
+  isAuthor?: boolean;
+  linkedIssueCount?: number;
+  commentCount?: number;
 }
 
 export type DeployEnvironment =

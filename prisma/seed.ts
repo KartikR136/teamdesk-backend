@@ -157,7 +157,11 @@ async function main() {
       createdById: orgA.admin.id,
       attendees: {
         create: [
-          { userId: orgA.admin.id, status: "ACCEPTED", respondedAt: new Date() },
+          {
+            userId: orgA.admin.id,
+            status: "ACCEPTED",
+            respondedAt: new Date(),
+          },
           { userId: orgA.member.id, status: "INVITED" },
         ],
       },
@@ -178,8 +182,16 @@ async function main() {
       createdById: orgA.admin.id,
       attendees: {
         create: [
-          { userId: orgA.admin.id, status: "ACCEPTED", respondedAt: new Date() },
-          { userId: orgA.member.id, status: "TENTATIVE", respondedAt: new Date() },
+          {
+            userId: orgA.admin.id,
+            status: "ACCEPTED",
+            respondedAt: new Date(),
+          },
+          {
+            userId: orgA.member.id,
+            status: "TENTATIVE",
+            respondedAt: new Date(),
+          },
         ],
       },
       // Demonstrates the meeting <-> issue link — sprint planning
@@ -190,9 +202,101 @@ async function main() {
     },
   });
 
+  // Demo pull requests — gives the "Pull Requests Awaiting Review" widget
+  // something real to show immediately after seeding, same reasoning as
+  // the demo meetings above. One clean PR waiting on the member, one with
+  // conflicts and no approvals yet (should surface as "high" urgency),
+  // and one already approved by the member (should NOT show up in their
+  // "awaiting review" list) — covers the interesting states without
+  // needing a person to create PRs by hand first.
+  const now = new Date();
+  const twoDaysAgo = new Date(now.getTime() - 1000 * 60 * 60 * 50); // >48h -> high urgency
+  const sixHoursAgo = new Date(now.getTime() - 1000 * 60 * 60 * 6);
+
+  const prNeedsReview = await prisma.pullRequest.upsert({
+    where: { id: "55555555-5555-4555-8555-555555555551" },
+    update: {},
+    create: {
+      id: "55555555-5555-4555-8555-555555555551",
+      title: "Add pagination to the issues list",
+      description:
+        "Cursor-paginates the issues endpoint and updates the list UI to load more on scroll.",
+      repoName: "demo-org-a/web",
+      sourceBranch: "feat/issue-pagination",
+      targetBranch: "main",
+      mergeStatus: "CLEAN",
+      filesChanged: 6,
+      linesAdded: 214,
+      linesRemoved: 38,
+      createdAt: twoDaysAgo,
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      authorId: orgA.admin.id,
+      reviewers: { create: [{ userId: orgA.member.id }] },
+      linkedIssues: {
+        create: [{ issueId: "11111111-1111-4111-8111-111111111112" }],
+      },
+    },
+  });
+
+  await prisma.pullRequest.upsert({
+    where: { id: "55555555-5555-4555-8555-555555555552" },
+    update: {},
+    create: {
+      id: "55555555-5555-4555-8555-555555555552",
+      title: "Fix race condition in meeting RSVP upsert",
+      description:
+        "Two concurrent RSVPs from the same user could both insert instead of upsert. Adds a unique constraint and a transaction.",
+      repoName: "demo-org-a/web",
+      sourceBranch: "fix/rsvp-race",
+      targetBranch: "main",
+      mergeStatus: "CONFLICTS",
+      filesChanged: 3,
+      linesAdded: 41,
+      linesRemoved: 9,
+      createdAt: sixHoursAgo,
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      authorId: orgA.admin.id,
+      reviewers: { create: [{ userId: orgA.member.id }] },
+    },
+  });
+
+  // Already approved by the member — should be filtered out of their
+  // "awaiting review" list by NativePullRequestProvider, demonstrating
+  // that an APPROVED review actually clears a PR off the widget.
+  await prisma.pullRequest.upsert({
+    where: { id: "55555555-5555-4555-8555-555555555553" },
+    update: {},
+    create: {
+      id: "55555555-5555-4555-8555-555555555553",
+      title: "Update README with local dev setup",
+      repoName: "demo-org-a/web",
+      sourceBranch: "docs/dev-setup",
+      targetBranch: "main",
+      mergeStatus: "CLEAN",
+      filesChanged: 1,
+      linesAdded: 22,
+      linesRemoved: 4,
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      authorId: orgA.admin.id,
+      reviewers: {
+        create: [
+          {
+            userId: orgA.member.id,
+            status: "APPROVED",
+            respondedAt: new Date(),
+          },
+        ],
+      },
+    },
+  });
+
   console.log("Demo seed complete:", {
     orgA: orgA.org.slug,
     orgB: orgB.org.slug,
+    demoPullRequestAwaitingReview: prNeedsReview.title,
   });
 }
 

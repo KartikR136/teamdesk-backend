@@ -20,6 +20,7 @@ model Organization {
   projects      Project[]
   notifications Notification[]
   meetings      Meeting[]
+  pullRequests  PullRequest[]
 }
 
 model User {
@@ -42,6 +43,8 @@ model User {
   recentlyViewedIssues  RecentlyViewedIssue[]
   createdMeetings       Meeting[]             @relation("MeetingCreator")
   meetingAttendances    MeetingAttendee[]     @relation("MeetingAttendance")
+  authoredPullRequests  PullRequest[]         @relation("PullRequestAuthor")
+  prReviews             PullRequestReviewer[] @relation("PullRequestReviewerUser")
 }
 
 model Membership {
@@ -66,6 +69,7 @@ model Project {
   decisions      DecisionLog[]
   issues         Issue[]
   meetings       Meeting[]
+  pullRequests   PullRequest[]
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
@@ -91,6 +95,7 @@ model Issue {
   notifications    Notification[]
   recentlyViewedBy RecentlyViewedIssue[]
   meetingLinks     MeetingLinkedIssue[]
+  pullRequestLinks PullRequestLinkedIssue[]
   assignee         User?                  @relation("IssueAssignee", fields: [assigneeId], references: [id])
   creator          User                   @relation("IssueCreator", fields: [creatorId], references: [id])
   organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -104,16 +109,25 @@ model Issue {
 }
 
 model Comment {
-  id        String   @id @default(uuid())
-  body      String
-  createdAt DateTime @default(now())
-  issueId   String
-  authorId  String
-  updatedAt DateTime @updatedAt
-  author    User     @relation(fields: [authorId], references: [id])
-  issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  id            String       @id @default(uuid())
+  body          String
+  createdAt     DateTime     @default(now())
+  // Exactly one of issueId/pullRequestId is set — Comment is shared
+  // between Issues and PullRequests (a PR review discussion is the same
+  // shape as an issue discussion) rather than duplicating the model.
+  // issueId is still required (not newly optional) so every pre-existing
+  // Issue comment and query keeps working untouched; pullRequestId is the
+  // new, additive half of the pair.
+  issueId       String?
+  pullRequestId String?
+  authorId      String
+  updatedAt     DateTime     @updatedAt
+  author        User         @relation(fields: [authorId], references: [id])
+  issue         Issue?       @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  pullRequest   PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
 
   @@index([issueId])
+  @@index([pullRequestId])
 }
 
 model ActivityLog {
@@ -228,10 +242,12 @@ model Notification {
   actorId        String?
   organizationId String
   issueId        String?
+  pullRequestId  String?
   recipient      User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
   actor          User?            @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   issue          Issue?           @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  pullRequest    PullRequest?     @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
 
   // Recipient's own feed, newest first — the dashboard's actual read pattern.
   @@index([recipientId, createdAt])
@@ -260,6 +276,15 @@ enum NotificationType {
   ASSIGNMENT
   STATUS_CHANGE
   ORG_EVENT
+  // Pull Request events — mirrors why Meeting-related events didn't reuse
+  // ORG_EVENT for everything: "you were requested as a reviewer" and "your
+  // PR was merged" are distinct, actionable notification kinds the
+  // frontend can render with dedicated icons (PR_REVIEW_REQUESTED maps to
+  // NotificationKind "MENTIONED", PR_MERGED maps 1:1 to the frontend's
+  // existing "PR_MERGED" kind — see dashboard.repository.ts's KIND_MAP).
+  PR_REVIEW_REQUESTED
+  PR_REVIEW_SUBMITTED
+  PR_MERGED
 }
 
 enum Role {
@@ -399,5 +424,116 @@ model MeetingLinkedIssue {
   issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
 
   @@unique([meetingId, issueId])
+  @@index([issueId])
+}
+
+// ---------------------------------------------------------------------
+// Pull Requests — "Pull Requests Awaiting Review" backend. Previously
+// the dashboard's PullRequestProvider interface only had a
+// GitHubPullRequestProvider (always returned integrationRequired:true,
+// []), anticipating a future GitHub OAuth/App integration. This adds a
+// first-class, native pull-request/code-review model instead — same
+// move as NativeMeetingCalendarProvider made for meetings. A real
+// GitHub/GitLab provider can still be added later as an additional
+// source merged into the same PullRequestDto shape; this is not
+// mutually exclusive with that (see NativePullRequestProvider.ts).
+// ---------------------------------------------------------------------
+
+enum PRStatus {
+  OPEN
+  MERGED
+  CLOSED
+}
+
+// Mirrors the frontend's `mergeStatus` union field-for-field (see
+// dashboard.dto.ts's PullRequestDto) — kept as a real enum here since,
+// unlike urgency (which is derived, not stored — see
+// NativePullRequestProvider.ts), mergeability is information the author
+// or a CI webhook actually asserts and needs to persist.
+enum PRMergeStatus {
+  CLEAN
+  CONFLICTS
+  CHECKS_FAILING
+}
+
+enum PRReviewStatus {
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+  COMMENTED
+}
+
+model PullRequest {
+  id              String              @id @default(uuid())
+  title           String
+  description     String?
+  // Free-text, not a real git integration — lets a team track review
+  // requests for work hosted anywhere (this repo, a private GitLab, even
+  // a design doc) without needing a GitHub App connection at all.
+  repoName        String
+  sourceBranch    String
+  targetBranch    String              @default("main")
+  status          PRStatus            @default(OPEN)
+  mergeStatus     PRMergeStatus       @default(CLEAN)
+  filesChanged    Int                 @default(0)
+  linesAdded      Int                 @default(0)
+  linesRemoved    Int                 @default(0)
+  // Optional link out to the real PR if the team also has one on an
+  // actual git host — TeamDesk becomes the review-tracking layer on top,
+  // not a replacement for the diff view itself.
+  externalUrl     String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  mergedAt        DateTime?
+  closedAt        DateTime?
+  organizationId  String
+  projectId       String?
+  authorId        String
+  organization    Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project         Project?                 @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  author          User                     @relation("PullRequestAuthor", fields: [authorId], references: [id])
+  reviewers       PullRequestReviewer[]
+  linkedIssues    PullRequestLinkedIssue[]
+  comments        Comment[]
+  notifications   Notification[]
+
+  // Powers "pull requests awaiting review" (organizationId IN (...),
+  // status OPEN, joined against reviewers where userId = me).
+  @@index([organizationId, status])
+  @@index([authorId])
+  @@index([projectId])
+}
+
+// One row per requested reviewer. Distinct from Membership on purpose —
+// same reasoning as MeetingAttendee: who's asked to review a specific PR
+// is unrelated to org membership itself, and this is where each
+// reviewer's individual approve/request-changes decision lives.
+model PullRequestReviewer {
+  id            String         @id @default(uuid())
+  pullRequestId String
+  userId        String
+  status        PRReviewStatus @default(PENDING)
+  requestedAt   DateTime       @default(now())
+  respondedAt   DateTime?
+  pullRequest   PullRequest    @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  user          User           @relation("PullRequestReviewerUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pullRequestId, userId])
+  @@index([userId, status])
+}
+
+// The "this PR closes that issue" capability — many-to-many, same shape
+// as MeetingLinkedIssue. Merging a PR with linked issues auto-transitions
+// each one to DONE (see routes/pullRequests.ts's merge handler) instead
+// of leaving that as manual busywork after every merge.
+model PullRequestLinkedIssue {
+  id            String      @id @default(uuid())
+  pullRequestId String
+  issueId       String
+  createdAt     DateTime    @default(now())
+  pullRequest   PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  issue         Issue       @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([pullRequestId, issueId])
   @@index([issueId])
 }

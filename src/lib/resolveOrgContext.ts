@@ -85,14 +85,25 @@ export async function resolveOrgFromComment(
 
   const comment = await prisma.comment.findUnique({
     where: { id: commentId },
-    select: { issue: { select: { organizationId: true } } },
+    select: {
+      issue: { select: { organizationId: true } },
+      pullRequest: { select: { organizationId: true } },
+    },
   });
 
-  if (!comment) {
+  // This resolver is only ever wired up for the /comments/:commentId
+  // routes, which are issue-comment routes exclusively — PR comments use
+  // their own resolveOrgFromPullRequestComment (routes/pullRequests.ts).
+  // The pullRequest branch here is just defense in depth against a
+  // client passing a PR-comment id to the wrong endpoint.
+  const organizationId =
+    comment?.issue?.organizationId ?? comment?.pullRequest?.organizationId;
+
+  if (!comment || !organizationId) {
     return res.status(404).json({ error: "Comment not found" });
   }
 
-  req.organizationId = comment.issue.organizationId;
+  req.organizationId = organizationId;
   next();
 }
 
@@ -148,5 +159,59 @@ export async function resolveOrgFromMeeting(
   }
 
   req.organizationId = meeting.organizationId;
+  next();
+}
+
+// Same pattern for PullRequest-scoped routes (get/update/merge/close/
+// review/link a single pull request). organizationId is denormalized
+// directly onto PullRequest, same convention as Meeting/DecisionLog.
+export async function resolveOrgFromPullRequest(
+  req: OrgScopedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const pullRequestId = req.params.pullRequestId;
+
+  if (typeof pullRequestId !== "string") {
+    return res.status(400).json({ error: "Invalid pull request id" });
+  }
+
+  const pullRequest = await prisma.pullRequest.findUnique({
+    where: { id: pullRequestId },
+    select: { organizationId: true },
+  });
+
+  if (!pullRequest) {
+    return res.status(404).json({ error: "Pull request not found" });
+  }
+
+  req.organizationId = pullRequest.organizationId;
+  next();
+}
+
+// Same pattern for PR-comment-scoped routes (edit/delete a single PR
+// comment), mirroring resolveOrgFromComment's Comment -> Issue ->
+// organizationId lookup but through PullRequest instead.
+export async function resolveOrgFromPullRequestComment(
+  req: OrgScopedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const commentId = req.params.commentId;
+
+  if (typeof commentId !== "string") {
+    return res.status(400).json({ error: "Invalid comment id" });
+  }
+
+  const comment = await prisma.comment.findUnique({
+    where: { id: commentId },
+    select: { pullRequest: { select: { organizationId: true } } },
+  });
+
+  if (!comment || !comment.pullRequest) {
+    return res.status(404).json({ error: "Comment not found" });
+  }
+
+  req.organizationId = comment.pullRequest.organizationId;
   next();
 }

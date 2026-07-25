@@ -33,6 +33,21 @@ export const ActivityAction = {
   MEETING_NOTES_UPDATED: "MEETING_NOTES_UPDATED",
   MEETING_ISSUE_LINKED: "MEETING_ISSUE_LINKED",
   MEETING_ISSUE_UNLINKED: "MEETING_ISSUE_UNLINKED",
+  // Pull Requests — mirrors the MEETING_* convention. Review submissions
+  // and merges get their own actions (not folded into PR_UPDATED) for the
+  // same reason MEETING_RSVP is separate from MEETING_UPDATED: they're
+  // audit-worthy events performed by people other than the PR's author.
+  PR_CREATED: "PR_CREATED",
+  PR_UPDATED: "PR_UPDATED",
+  PR_MERGED: "PR_MERGED",
+  PR_CLOSED: "PR_CLOSED",
+  PR_REOPENED: "PR_REOPENED",
+  PR_REVIEWER_ADDED: "PR_REVIEWER_ADDED",
+  PR_REVIEWER_REMOVED: "PR_REVIEWER_REMOVED",
+  PR_REVIEW_SUBMITTED: "PR_REVIEW_SUBMITTED",
+  PR_COMMENT_CREATED: "PR_COMMENT_CREATED",
+  PR_ISSUE_LINKED: "PR_ISSUE_LINKED",
+  PR_ISSUE_UNLINKED: "PR_ISSUE_UNLINKED",
 } as const;
 
 export type ActivityActionType =

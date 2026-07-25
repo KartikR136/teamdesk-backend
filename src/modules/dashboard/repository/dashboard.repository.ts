@@ -18,6 +18,16 @@ const KIND_MAP: Record<string, NotificationKind> = {
   MENTION: "MENTIONED",
   STATUS_CHANGE: "COMMENT_ADDED",
   ORG_EVENT: "MENTIONED",
+  // PR_MERGED maps 1:1 — the frontend union already has this exact kind.
+  // The other two PR events don't have a dedicated kind yet (same
+  // documented compromise as STATUS_CHANGE/ORG_EVENT above): a review
+  // request reads fine under "MENTIONED" (it's a direct ask for your
+  // attention), and a submitted review reads fine under "COMMENT_ADDED"
+  // (it's feedback landing on your PR). `message` always carries the
+  // real text regardless of which icon this picks.
+  PR_REVIEW_REQUESTED: "MENTIONED",
+  PR_REVIEW_SUBMITTED: "COMMENT_ADDED",
+  PR_MERGED: "PR_MERGED",
 };
 
 // Every query in this file scopes to organizationId IN (the user's own

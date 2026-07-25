@@ -3,7 +3,7 @@ import { requireAuth } from "../../../middleware/requireAuth";
 import { DashboardController } from "../controller/dashboard.controller";
 import { DashboardService } from "../service/dashboard.service";
 import { DashboardRepository } from "../repository/dashboard.repository";
-import { GitHubPullRequestProvider } from "../providers/pullRequest/GitHubPullRequestProvider";
+import { NativePullRequestProvider } from "../providers/pullRequest/NativePullRequestProvider";
 import { MockDeploymentProvider } from "../providers/deployment/MockDeploymentProvider";
 import { MockBuildHealthProvider } from "../providers/buildHealth/MockBuildHealthProvider";
 import { NativeMeetingCalendarProvider } from "../providers/calendar/NativeMeetingCalendarProvider";
@@ -17,7 +17,7 @@ import { DashboardSummaryService } from "../providers/ai/DashboardSummaryService
 // controller, or repository needs to know or change.
 const service = new DashboardService({
   repository: new DashboardRepository(),
-  pullRequestProvider: new GitHubPullRequestProvider(),
+  pullRequestProvider: new NativePullRequestProvider(),
   deploymentProvider: new MockDeploymentProvider("vercel"),
   buildHealthProvider: new MockBuildHealthProvider(),
   calendarProvider: new NativeMeetingCalendarProvider(),

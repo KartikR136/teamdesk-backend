@@ -184,7 +184,7 @@ router.patch(
       organizationId: req.organizationId!,
       userId: req.userId!,
       action: ActivityAction.COMMENT_UPDATED,
-      issueId: existing.issueId,
+      issueId: existing.issueId ?? undefined,
       metadata: { commentId: updated.id },
     });
 
@@ -233,7 +233,7 @@ router.delete(
       organizationId: req.organizationId!,
       userId: req.userId!,
       action: ActivityAction.COMMENT_DELETED,
-      issueId: existing.issueId,
+      issueId: existing.issueId ?? undefined,
       metadata: { commentId },
     });
 

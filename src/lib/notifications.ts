@@ -6,6 +6,9 @@ export const NotificationType = {
   ASSIGNMENT: "ASSIGNMENT",
   STATUS_CHANGE: "STATUS_CHANGE",
   ORG_EVENT: "ORG_EVENT",
+  PR_REVIEW_REQUESTED: "PR_REVIEW_REQUESTED",
+  PR_REVIEW_SUBMITTED: "PR_REVIEW_SUBMITTED",
+  PR_MERGED: "PR_MERGED",
 } as const;
 
 export type NotificationTypeValue =
@@ -17,6 +20,7 @@ interface NotifyParams {
   type: NotificationTypeValue;
   message: string;
   issueId?: string;
+  pullRequestId?: string;
   // Who caused this notification (e.g. who made the assignment/comment/
   // status change) — distinct from recipientId, and needed for the
   // dashboard's `actorName` field. Optional because not every notification
@@ -38,6 +42,7 @@ export async function notify(params: NotifyParams): Promise<void> {
         type: params.type,
         message: params.message,
         issueId: params.issueId,
+        pullRequestId: params.pullRequestId,
         actorId: params.actorId,
       },
     });
