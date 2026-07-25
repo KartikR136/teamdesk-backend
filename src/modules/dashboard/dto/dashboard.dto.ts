@@ -11,6 +11,7 @@ export type IssuePriority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
 export interface AssignedTaskDto {
   id: string;
   title: string;
+  projectId: string;
   projectName: string;
   status: IssueStatus;
   priority: IssuePriority;
@@ -112,6 +113,7 @@ export interface MeetingDto {
 export interface RecentlyViewedIssueDto {
   id: string;
   title: string;
+  projectId: string;
   projectName: string;
   priority: IssuePriority;
   status: IssueStatus;

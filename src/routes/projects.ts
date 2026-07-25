@@ -67,6 +67,11 @@ router.get(
 
     const projects = await prisma.project.findMany({
       where: { organizationId: req.organizationId! },
+      include: {
+        _count: {
+          select: { issues: { where: { status: { not: "DONE" } } } },
+        },
+      },
       ...paginationArgs,
     });
 

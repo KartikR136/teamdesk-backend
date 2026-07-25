@@ -66,7 +66,7 @@ export class DashboardRepository {
         status: { not: "DONE" },
       },
       include: {
-        project: { select: { name: true } },
+        project: { select: { id: true, name: true } },
       },
     });
 
@@ -90,6 +90,7 @@ export class DashboardRepository {
     return sorted.map((issue) => ({
       id: issue.id,
       title: issue.title,
+      projectId: issue.project.id,
       projectName: issue.project.name,
       status: issue.status,
       priority: issue.priority,
@@ -171,7 +172,7 @@ export class DashboardRepository {
       take: 10,
       include: {
         issue: {
-          include: { project: { select: { name: true } } },
+          include: { project: { select: { id: true, name: true } } },
         },
       },
     });
@@ -183,15 +184,19 @@ export class DashboardRepository {
         title: string;
         status: string;
         priority: string;
-        project: { name: string };
+        project: { id: string; name: string };
       } | null;
     }
 
     return (recent as Row[])
-      .filter((r): r is Row & { issue: NonNullable<Row["issue"]> } => r.issue !== null)
+      .filter(
+        (r): r is Row & { issue: NonNullable<Row["issue"]> } =>
+          r.issue !== null,
+      )
       .map((r) => ({
         id: r.issue.id,
         title: r.issue.title,
+        projectId: r.issue.project.id,
         projectName: r.issue.project.name,
         priority: r.issue.priority as RecentlyViewedIssueDto["priority"],
         status: r.issue.status as RecentlyViewedIssueDto["status"],

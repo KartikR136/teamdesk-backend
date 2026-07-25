@@ -58,7 +58,9 @@ router.post(
         organizationId: req.organizationId!,
         creatorId: req.userId!,
         priority: parsed.data.priority,
-        dueDate: parsed.data.dueDate ? new Date(parsed.data.dueDate) : undefined,
+        dueDate: parsed.data.dueDate
+          ? new Date(parsed.data.dueDate)
+          : undefined,
         estimatePoints: parsed.data.estimatePoints,
       },
     });
@@ -122,6 +124,10 @@ router.patch(
     const updated = await prisma.issue.update({
       where: { id: issueId },
       data: updateData,
+      include: {
+        creator: { select: { id: true, name: true } },
+        assignee: { select: { id: true, name: true } },
+      },
     });
 
     // Logged as a single ISSUE_UPDATED event carrying whichever fields the
