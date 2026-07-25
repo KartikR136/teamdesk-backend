@@ -134,6 +134,62 @@ async function main() {
     },
   });
 
+  // Demo meetings — gives the "Today's Meetings" widget and /dashboard/
+  // meetings something real to show immediately after seeding, without
+  // needing a person to create one by hand first.
+  const today = new Date();
+  const standupToday = new Date(today);
+  standupToday.setHours(9, 30, 0, 0);
+  const planningToday = new Date(today);
+  planningToday.setHours(14, 0, 0, 0);
+
+  await prisma.meeting.upsert({
+    where: { id: "44444444-4444-4444-8444-444444444441" },
+    update: {},
+    create: {
+      id: "44444444-4444-4444-8444-444444444441",
+      title: "Daily Standup",
+      kind: "STANDUP",
+      startsAt: standupToday,
+      durationMinutes: 15,
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      createdById: orgA.admin.id,
+      attendees: {
+        create: [
+          { userId: orgA.admin.id, status: "ACCEPTED", respondedAt: new Date() },
+          { userId: orgA.member.id, status: "INVITED" },
+        ],
+      },
+    },
+  });
+
+  await prisma.meeting.upsert({
+    where: { id: "44444444-4444-4444-8444-444444444442" },
+    update: {},
+    create: {
+      id: "44444444-4444-4444-8444-444444444442",
+      title: "Sprint Planning",
+      kind: "SPRINT_PLANNING",
+      startsAt: planningToday,
+      durationMinutes: 60,
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      createdById: orgA.admin.id,
+      attendees: {
+        create: [
+          { userId: orgA.admin.id, status: "ACCEPTED", respondedAt: new Date() },
+          { userId: orgA.member.id, status: "TENTATIVE", respondedAt: new Date() },
+        ],
+      },
+      // Demonstrates the meeting <-> issue link — sprint planning
+      // naturally references the demo issues seeded above.
+      linkedIssues: {
+        create: [{ issueId: "11111111-1111-4111-8111-111111111112" }],
+      },
+    },
+  });
+
   console.log("Demo seed complete:", {
     orgA: orgA.org.slug,
     orgB: orgB.org.slug,

@@ -123,3 +123,30 @@ export async function resolveOrgFromDecision(
   req.organizationId = decision.organizationId;
   next();
 }
+
+// Same pattern for Meeting-scoped routes (get/edit/delete/RSVP/link a
+// single meeting). organizationId is denormalized directly onto Meeting,
+// same convention as Issue/Project/DecisionLog.
+export async function resolveOrgFromMeeting(
+  req: OrgScopedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const meetingId = req.params.meetingId;
+
+  if (typeof meetingId !== "string") {
+    return res.status(400).json({ error: "Invalid meeting id" });
+  }
+
+  const meeting = await prisma.meeting.findUnique({
+    where: { id: meetingId },
+    select: { organizationId: true },
+  });
+
+  if (!meeting) {
+    return res.status(404).json({ error: "Meeting not found" });
+  }
+
+  req.organizationId = meeting.organizationId;
+  next();
+}

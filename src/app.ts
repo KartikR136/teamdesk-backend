@@ -11,6 +11,7 @@ import activityRouter from "./routes/activity";
 import invitationsRouter from "./routes/invitations";
 import membersRouter from "./routes/members";
 import decisionsRouter from "./routes/decisions";
+import meetingsRouter from "./routes/meetings";
 import dashboardRouter from "./modules/dashboard/routes/dashboard.routes";
 import { errorHandler } from "./middleware/errorHandler";
 import {
@@ -68,6 +69,7 @@ app.use("/api", activityRouter); // has full nested path already (organizations/
 app.use("/api", invitationsRouter); // has full nested paths already (organizations/:id/invitations, invitations/me, invitations/:id/accept|reject)
 app.use("/api", membersRouter); // has full nested paths already (organizations/:id/members, .../members/:userId)
 app.use("/api", decisionsRouter); // has full nested paths already (organizations/:id/decisions, decisions/:id, decisions/:id/status)
+app.use("/api", meetingsRouter); // has full nested paths already (organizations/:id/meetings, meetings/:id, meetings/:id/rsvp|notes|issues)
 app.use("/api/dashboard", dashboardRouter); // intentionally cross-org — see dashboard.controller.ts
 
 // Attack-console demo routes — only exist at all when DEMO_MODE is set.

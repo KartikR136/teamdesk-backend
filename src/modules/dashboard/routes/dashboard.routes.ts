@@ -6,7 +6,7 @@ import { DashboardRepository } from "../repository/dashboard.repository";
 import { GitHubPullRequestProvider } from "../providers/pullRequest/GitHubPullRequestProvider";
 import { MockDeploymentProvider } from "../providers/deployment/MockDeploymentProvider";
 import { MockBuildHealthProvider } from "../providers/buildHealth/MockBuildHealthProvider";
-import { MockCalendarProvider } from "../providers/calendar/MockCalendarProvider";
+import { NativeMeetingCalendarProvider } from "../providers/calendar/NativeMeetingCalendarProvider";
 import { ActivityLogCodingStatsProvider } from "../providers/codingStats/ActivityLogCodingStatsProvider";
 import { DashboardSummaryService } from "../providers/ai/DashboardSummaryService";
 
@@ -20,7 +20,7 @@ const service = new DashboardService({
   pullRequestProvider: new GitHubPullRequestProvider(),
   deploymentProvider: new MockDeploymentProvider("vercel"),
   buildHealthProvider: new MockBuildHealthProvider(),
-  calendarProvider: new MockCalendarProvider("google-calendar"),
+  calendarProvider: new NativeMeetingCalendarProvider(),
   codingStatsProvider: new ActivityLogCodingStatsProvider(),
   summaryService: new DashboardSummaryService(),
 });

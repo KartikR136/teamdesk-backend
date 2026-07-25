@@ -8,37 +8,40 @@ datasource db {
 }
 
 model Organization {
-  id           String        @id @default(uuid())
-  name         String
-  slug         String        @unique
-  createdAt    DateTime      @default(now())
-  activityLogs ActivityLog[]
-  decisions    DecisionLog[]
-  invitations  Invitation[]
-  issues       Issue[]
-  memberships  Membership[]
-  projects     Project[]
+  id            String         @id @default(uuid())
+  name          String
+  slug          String         @unique
+  createdAt     DateTime       @default(now())
+  activityLogs  ActivityLog[]
+  decisions     DecisionLog[]
+  invitations   Invitation[]
+  issues        Issue[]
+  memberships   Membership[]
+  projects      Project[]
   notifications Notification[]
+  meetings      Meeting[]
 }
 
 model User {
-  id                  String               @id @default(uuid())
-  email               String               @unique
-  passwordHash        String
-  name                String
-  createdAt           DateTime             @default(now())
-  activityLogs        ActivityLog[]
-  comments            Comment[]
-  decisions           DecisionLog[]
-  sentInvitations     Invitation[]         @relation("InvitationsSent")
-  assignedIssues      Issue[]              @relation("IssueAssignee")
-  createdIssues       Issue[]              @relation("IssueCreator")
-  memberships         Membership[]
-  passwordResetTokens PasswordResetToken[]
-  refreshTokens       RefreshToken[]
-  notificationsReceived Notification[] @relation("NotificationRecipient")
-  notificationsCaused   Notification[] @relation("NotificationActor")
-  recentlyViewedIssues RecentlyViewedIssue[]
+  id                    String                @id @default(uuid())
+  email                 String                @unique
+  passwordHash          String
+  name                  String
+  createdAt             DateTime              @default(now())
+  activityLogs          ActivityLog[]
+  comments              Comment[]
+  decisions             DecisionLog[]
+  sentInvitations       Invitation[]          @relation("InvitationsSent")
+  assignedIssues        Issue[]               @relation("IssueAssignee")
+  createdIssues         Issue[]               @relation("IssueCreator")
+  memberships           Membership[]
+  passwordResetTokens   PasswordResetToken[]
+  refreshTokens         RefreshToken[]
+  notificationsReceived Notification[]        @relation("NotificationRecipient")
+  notificationsCaused   Notification[]        @relation("NotificationActor")
+  recentlyViewedIssues  RecentlyViewedIssue[]
+  createdMeetings       Meeting[]             @relation("MeetingCreator")
+  meetingAttendances    MeetingAttendee[]     @relation("MeetingAttendance")
 }
 
 model Membership {
@@ -62,34 +65,36 @@ model Project {
   organizationId String
   decisions      DecisionLog[]
   issues         Issue[]
+  meetings       Meeting[]
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
 }
 
 model Issue {
-  id             String                 @id @default(uuid())
-  title          String
-  description    String?
-  status         IssueStatus            @default(TODO)
-  priority       IssuePriority          @default(MEDIUM)
-  dueDate        DateTime?
-  estimatePoints Int?
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @updatedAt
-  organizationId String
-  projectId      String
-  creatorId      String
-  assigneeId     String?
-  activityLogs   ActivityLog[]
-  comments       Comment[]
-  decisionLinks  DecisionRelatedIssue[]
-  notifications  Notification[]
+  id               String                 @id @default(uuid())
+  title            String
+  description      String?
+  status           IssueStatus            @default(TODO)
+  priority         IssuePriority          @default(MEDIUM)
+  dueDate          DateTime?
+  estimatePoints   Int?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  organizationId   String
+  projectId        String
+  creatorId        String
+  assigneeId       String?
+  activityLogs     ActivityLog[]
+  comments         Comment[]
+  decisionLinks    DecisionRelatedIssue[]
+  notifications    Notification[]
   recentlyViewedBy RecentlyViewedIssue[]
-  assignee       User?                  @relation("IssueAssignee", fields: [assigneeId], references: [id])
-  creator        User                   @relation("IssueCreator", fields: [creatorId], references: [id])
-  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  project        Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  meetingLinks     MeetingLinkedIssue[]
+  assignee         User?                  @relation("IssueAssignee", fields: [assigneeId], references: [id])
+  creator          User                   @relation("IssueCreator", fields: [creatorId], references: [id])
+  organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project          Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
   @@index([organizationId, createdAt])
@@ -290,4 +295,109 @@ enum DecisionStatus {
   ACCEPTED
   SUPERSEDED
   ARCHIVED
+}
+
+// ---------------------------------------------------------------------
+// Meetings — "Today's Meetings" backend. Previously the dashboard's
+// CalendarProvider interface only had a MockCalendarProvider (always
+// returned integrationRequired:true, []), anticipating a future Google/
+// Outlook OAuth integration. This adds a first-class, native meeting
+// model instead — no external calendar needed. A real calendar provider
+// can still be added later as an additional source that merges into the
+// same MeetingDto shape; this is not mutually exclusive with that.
+// ---------------------------------------------------------------------
+
+enum MeetingKind {
+  STANDUP
+  SPRINT_PLANNING
+  DESIGN_REVIEW
+  BACKEND_SYNC
+  DEMO
+  RETROSPECTIVE
+  ONE_ON_ONE
+  INCIDENT_REVIEW
+  OTHER
+}
+
+enum RsvpStatus {
+  INVITED
+  ACCEPTED
+  DECLINED
+  TENTATIVE
+}
+
+// Deliberately NOT a full RRULE implementation — this generates a fixed,
+// finite set of concrete Meeting rows up front (see
+// lib/meetingRecurrence.ts), each with its own id and its own
+// attendee/RSVP/notes state. That trade-off keeps every other part of the
+// system (today's-meetings query, RSVP, notes, issue-linking) working
+// against ordinary Meeting rows with zero special-casing for recurrence.
+// seriesId is only used to let the UI show/manage "this and future
+// occurrences" as a group.
+enum RecurrenceRule {
+  NONE
+  DAILY
+  WEEKDAYS
+  WEEKLY
+}
+
+model Meeting {
+  id              String               @id @default(uuid())
+  title           String
+  kind            MeetingKind          @default(OTHER)
+  description     String?
+  startsAt        DateTime
+  durationMinutes Int                  @default(30)
+  location        String? // physical room name, or a video-call URL
+  notes           String? // post-meeting minutes, filled in after it happens
+  recurrenceRule  RecurrenceRule       @default(NONE)
+  seriesId        String? // shared across all instances generated from one recurring create
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  organizationId  String
+  projectId       String?
+  createdById     String
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project         Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdBy       User                 @relation("MeetingCreator", fields: [createdById], references: [id])
+  attendees       MeetingAttendee[]
+  linkedIssues    MeetingLinkedIssue[]
+
+  // Powers "today's meetings" (organizationId IN (...), startsAt in [start,end) of today)
+  @@index([organizationId, startsAt])
+  @@index([projectId])
+  @@index([seriesId])
+}
+
+// One row per invited user. Distinct from Membership on purpose — who's
+// invited to a specific meeting is unrelated to org membership itself,
+// and this is where each person's individual RSVP lives.
+model MeetingAttendee {
+  id          String     @id @default(uuid())
+  meetingId   String
+  userId      String
+  status      RsvpStatus @default(INVITED)
+  respondedAt DateTime?
+  createdAt   DateTime   @default(now())
+  meeting     Meeting    @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user        User       @relation("MeetingAttendance", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, userId])
+  @@index([userId])
+}
+
+// The "connect a task/issue to a meeting" feature the frontend had no way
+// to express before. Many-to-many: one meeting can reference several
+// issues (a sprint planning meeting touches many), and one issue can be
+// discussed across several meetings (e.g. a recurring incident review).
+model MeetingLinkedIssue {
+  id        String   @id @default(uuid())
+  meetingId String
+  issueId   String
+  createdAt DateTime @default(now())
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, issueId])
+  @@index([issueId])
 }

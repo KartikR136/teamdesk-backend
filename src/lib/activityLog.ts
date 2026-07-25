@@ -21,6 +21,18 @@ export const ActivityAction = {
   DECISION_UPDATED: "DECISION_UPDATED",
   DECISION_STATUS_CHANGED: "DECISION_STATUS_CHANGED",
   DECISION_DELETED: "DECISION_DELETED",
+  // Meetings — mirrors the DECISION_* naming convention. RSVP and
+  // notes get their own actions (not folded into MEETING_UPDATED) for
+  // the same reason DECISION_STATUS_CHANGED is separate from
+  // DECISION_UPDATED: they're audit-worthy events in their own right,
+  // performed by people other than the meeting's creator.
+  MEETING_CREATED: "MEETING_CREATED",
+  MEETING_UPDATED: "MEETING_UPDATED",
+  MEETING_DELETED: "MEETING_DELETED",
+  MEETING_RSVP: "MEETING_RSVP",
+  MEETING_NOTES_UPDATED: "MEETING_NOTES_UPDATED",
+  MEETING_ISSUE_LINKED: "MEETING_ISSUE_LINKED",
+  MEETING_ISSUE_UNLINKED: "MEETING_ISSUE_UNLINKED",
 } as const;
 
 export type ActivityActionType =

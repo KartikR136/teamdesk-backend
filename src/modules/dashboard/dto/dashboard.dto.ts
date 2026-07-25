@@ -99,7 +99,16 @@ export type MeetingKind =
   | "DESIGN_REVIEW"
   | "BACKEND_SYNC"
   | "DEMO"
-  | "RETROSPECTIVE";
+  | "RETROSPECTIVE"
+  | "ONE_ON_ONE"
+  | "INCIDENT_REVIEW"
+  | "OTHER";
+
+export type MeetingRsvpStatus =
+  | "INVITED"
+  | "ACCEPTED"
+  | "DECLINED"
+  | "TENTATIVE";
 
 export interface MeetingDto {
   id: string;
@@ -108,6 +117,21 @@ export interface MeetingDto {
   startsAt: string;
   durationMinutes: number;
   attendeeCount: number;
+  // Everything below is additive — the original frontend Meeting type
+  // only declared the five fields above (backed by MockCalendarProvider,
+  // which never returned real data). These extra fields are all optional
+  // so existing widget code keeps working untouched; MeetingsCard.tsx and
+  // the new /dashboard/meetings pages opt into them.
+  organizationId?: string;
+  organizationName?: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  location?: string | null;
+  /** This viewer's own RSVP status for this meeting. */
+  myRsvpStatus?: MeetingRsvpStatus;
+  /** True if this viewer created/organizes the meeting. */
+  isOrganizer?: boolean;
+  linkedIssueCount?: number;
 }
 
 export interface RecentlyViewedIssueDto {
