@@ -21,6 +21,7 @@ model Organization {
   notifications Notification[]
   meetings      Meeting[]
   pullRequests  PullRequest[]
+  deployments   Deployment[]
 }
 
 model User {
@@ -45,6 +46,8 @@ model User {
   meetingAttendances    MeetingAttendee[]     @relation("MeetingAttendance")
   authoredPullRequests  PullRequest[]         @relation("PullRequestAuthor")
   prReviews             PullRequestReviewer[] @relation("PullRequestReviewerUser")
+  triggeredDeployments  Deployment[]          @relation("DeploymentTriggeredBy")
+  rolledBackDeployments Deployment[]          @relation("DeploymentRolledBackBy")
 }
 
 model Membership {
@@ -70,6 +73,7 @@ model Project {
   issues         Issue[]
   meetings       Meeting[]
   pullRequests   PullRequest[]
+  deployments    Deployment[]
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
@@ -243,11 +247,13 @@ model Notification {
   organizationId String
   issueId        String?
   pullRequestId  String?
+  deploymentId   String?
   recipient      User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
   actor          User?            @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   issue          Issue?           @relation(fields: [issueId], references: [id], onDelete: Cascade)
   pullRequest    PullRequest?     @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  deployment     Deployment?      @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
 
   // Recipient's own feed, newest first — the dashboard's actual read pattern.
   @@index([recipientId, createdAt])
@@ -285,6 +291,13 @@ enum NotificationType {
   PR_REVIEW_REQUESTED
   PR_REVIEW_SUBMITTED
   PR_MERGED
+  // Deployment events. Two distinct values (not one generic
+  // DEPLOYMENT_EVENT) so a failed prod deploy can eventually get its own
+  // icon/urgency treatment even though today both map to the frontend's
+  // single "DEPLOYMENT_COMPLETED" NotificationKind (see dashboard.dto.ts's
+  // comment on that mapping compromise for PR-era precedent).
+  DEPLOYMENT_SUCCEEDED
+  DEPLOYMENT_FAILED
 }
 
 enum Role {
@@ -496,6 +509,11 @@ model PullRequest {
   linkedIssues    PullRequestLinkedIssue[]
   comments        Comment[]
   notifications   Notification[]
+  // A merged PR is often what a deployment actually ships — optional link
+  // lets DORA's "lead time for changes" be computed as
+  // deployment.deployedAt - pullRequest.mergedAt for whichever PRs are
+  // tagged onto a given deploy (see routes/deployments.ts's dora endpoint).
+  deployments     Deployment[]
 
   // Powers "pull requests awaiting review" (organizationId IN (...),
   // status OPEN, joined against reviewers where userId = me).
@@ -536,4 +554,98 @@ model PullRequestLinkedIssue {
 
   @@unique([pullRequestId, issueId])
   @@index([issueId])
+}
+
+// ---------------------------------------------------------------------
+// Deployments — "Recent Deployments" backend. Previously the dashboard's
+// DeploymentProvider interface only had a MockDeploymentProvider
+// (parameterized "vercel"/"render"/etc, always returned
+// integrationRequired:true, []), anticipating a future CI/CD webhook
+// integration. This adds a first-class, native deployment-tracking model
+// instead — same move NativeMeetingCalendarProvider and
+// NativePullRequestProvider made for their respective domains. A real
+// Vercel/Render/Railway/GitHub-Actions webhook receiver can still be
+// layered in later as an additional source that creates rows in this same
+// table (or merges into the same DeploymentDto shape); this is not
+// mutually exclusive with that — see NativeDeploymentProvider.ts.
+//
+// Beyond simple tracking, this model also backs three creative additions
+// documented in routes/deployments.ts:
+//   1. Rollback — `previousDeploymentId` gives every deploy a lineage, so
+//      "roll back to the last good deploy" is a real, traceable action
+//      (not just a status flip) and the UI can render a rollback chain.
+//   2. Synthetic health checks — `healthStatus` lets a deploy be marked
+//      healthy/degraded/unhealthy after the fact, independent of whether
+//      the deploy itself succeeded (a deploy can succeed and still be
+//      unhealthy in production).
+//   3. DORA metrics — deployment frequency, lead time for changes (via
+//      the optional PullRequest link), change failure rate, and MTTR are
+//      all derivable from this table with no extra schema needed.
+// ---------------------------------------------------------------------
+
+enum DeployEnvironment {
+  PRODUCTION
+  PREVIEW
+  STAGING
+  DEVELOPMENT
+}
+
+enum DeployStatus {
+  QUEUED
+  IN_PROGRESS
+  SUCCESS
+  FAILED
+  ROLLED_BACK
+}
+
+// Deliberately separate from DeployStatus: a deploy can SUCCEED and still
+// turn UNHEALTHY minutes later once real traffic hits it (that's exactly
+// the "change failure rate" signal DORA cares about beyond the initial
+// deploy outcome). UNKNOWN is the default until someone runs a check.
+enum DeployHealth {
+  UNKNOWN
+  HEALTHY
+  DEGRADED
+  UNHEALTHY
+}
+
+model Deployment {
+  id               String            @id @default(uuid())
+  environment      DeployEnvironment @default(PRODUCTION)
+  status           DeployStatus      @default(QUEUED)
+  health           DeployHealth      @default(UNKNOWN)
+  commitHash       String
+  commitMessage    String
+  branch           String            @default("main")
+  durationSeconds  Int? // set once the deploy leaves IN_PROGRESS
+  notes            String? // free-text, e.g. rollback reason or incident note
+  createdAt        DateTime          @default(now()) // when the deploy was queued/triggered
+  startedAt        DateTime? // QUEUED -> IN_PROGRESS transition time
+  completedAt      DateTime? // SUCCESS/FAILED/ROLLED_BACK transition time
+  healthCheckedAt  DateTime?
+  rolledBackAt     DateTime?
+  organizationId   String
+  projectId        String?
+  pullRequestId    String? // the PR this deploy is believed to ship
+  triggeredById    String
+  rolledBackById   String?
+  // Self-relation: when this deployment IS a rollback, previousDeploymentId
+  // points at the deployment it restores the org to. Named `previous`
+  // rather than `target` because it always points backward in time.
+  previousDeploymentId String?
+  previousDeployment   Deployment?     @relation("DeploymentRollbackLineage", fields: [previousDeploymentId], references: [id])
+  rollbacks            Deployment[]    @relation("DeploymentRollbackLineage")
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  pullRequest      PullRequest?      @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  triggeredBy      User              @relation("DeploymentTriggeredBy", fields: [triggeredById], references: [id])
+  rolledBackBy     User?             @relation("DeploymentRolledBackBy", fields: [rolledBackById], references: [id])
+  notifications    Notification[]
+
+  // Powers "recent deployments" (organizationId IN (...), ordered by
+  // createdAt) and per-environment DORA queries.
+  @@index([organizationId, createdAt])
+  @@index([organizationId, environment, createdAt])
+  @@index([projectId])
+  @@index([status])
 }

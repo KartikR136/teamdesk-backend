@@ -293,6 +293,197 @@ async function main() {
     },
   });
 
+  // Demo deployments — gives the "Recent Deployments" dashboard widget
+  // and /dashboard/deployments its DORA metrics something real to chart
+  // immediately after seeding. Spread across the last ~9 days so
+  // deployment-frequency isn't a single-day spike, includes one FAILED
+  // prod deploy immediately followed by a SUCCESS (feeds MTTR), and one
+  // deploy that later gets superseded by a ROLLED_BACK + new SUCCESS
+  // pair (feeds the rollback-lineage UI). commitHash values are chosen
+  // so simulateOutcome() in routes/deployments.ts would have produced
+  // the SAME status these rows are seeded with, if this had gone through
+  // the real endpoint instead of a direct seed — keeps the demo honest
+  // rather than hand-picking impossible combinations.
+  const daysAgo = (n: number, hour = 10) => {
+    const d = new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
+    d.setHours(hour, 0, 0, 0);
+    return d;
+  };
+
+  const deploy1Start = daysAgo(9);
+  await prisma.deployment.upsert({
+    where: { id: "66666666-6666-4666-8666-666666666661" },
+    update: {},
+    create: {
+      id: "66666666-6666-4666-8666-666666666661",
+      environment: "PRODUCTION",
+      status: "SUCCESS",
+      health: "HEALTHY",
+      commitHash: "a1b2c3d4e5f60000000000000000000000000000",
+      commitMessage: "Add pagination to the issues list",
+      branch: "main",
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      pullRequestId: prNeedsReview.id,
+      triggeredById: orgA.admin.id,
+      createdAt: deploy1Start,
+      startedAt: deploy1Start,
+      completedAt: new Date(deploy1Start.getTime() + 210 * 1000),
+      durationSeconds: 210,
+      healthCheckedAt: new Date(deploy1Start.getTime() + 210 * 1000),
+    },
+  });
+
+  const deploy2Start = daysAgo(6);
+  await prisma.deployment.upsert({
+    where: { id: "66666666-6666-4666-8666-666666666662" },
+    update: {},
+    create: {
+      id: "66666666-6666-4666-8666-666666666662",
+      environment: "PRODUCTION",
+      status: "FAILED",
+      health: "UNKNOWN",
+      commitHash: "badc0ffee0000000000000000000000000000000",
+      commitMessage: "Attempt async cache warming on org switch",
+      branch: "main",
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      triggeredById: orgA.admin.id,
+      createdAt: deploy2Start,
+      startedAt: deploy2Start,
+      completedAt: new Date(deploy2Start.getTime() + 45 * 1000),
+      durationSeconds: 45,
+      notes:
+        "Rolled forward with a hotfix rather than rolling back — see next deploy.",
+    },
+  });
+
+  const deploy3Start = daysAgo(6, 11);
+  await prisma.deployment.upsert({
+    where: { id: "66666666-6666-4666-8666-666666666663" },
+    update: {},
+    create: {
+      id: "66666666-6666-4666-8666-666666666663",
+      environment: "PRODUCTION",
+      status: "SUCCESS",
+      health: "HEALTHY",
+      commitHash: "feedface0000000000000000000000000000000",
+      commitMessage: "Hotfix: guard cache warming behind a feature flag",
+      branch: "hotfix/cache-warming-guard",
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      triggeredById: orgA.admin.id,
+      createdAt: deploy3Start,
+      startedAt: deploy3Start,
+      completedAt: new Date(deploy3Start.getTime() + 60 * 1000),
+      durationSeconds: 60,
+      healthCheckedAt: new Date(deploy3Start.getTime() + 60 * 1000),
+    },
+  });
+
+  // A deploy that later needed a real rollback (not just a hotfix) —
+  // demonstrates the rollback lineage UI end to end.
+  const deploy4Start = daysAgo(3);
+  await prisma.deployment.upsert({
+    where: { id: "66666666-6666-4666-8666-666666666664" },
+    update: {},
+    create: {
+      id: "66666666-6666-4666-8666-666666666664",
+      environment: "PRODUCTION",
+      status: "ROLLED_BACK",
+      health: "UNHEALTHY",
+      commitHash: "deadbeef0000000000000000000000000000000",
+      commitMessage: "Migrate meeting RSVP writes to a new upsert path",
+      branch: "fix/rsvp-race",
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      triggeredById: orgA.admin.id,
+      createdAt: deploy4Start,
+      startedAt: deploy4Start,
+      completedAt: new Date(deploy4Start.getTime() + 300 * 1000),
+      durationSeconds: 300,
+      healthCheckedAt: new Date(deploy4Start.getTime() + 900 * 1000),
+      rolledBackAt: new Date(deploy4Start.getTime() + 1200 * 1000),
+      rolledBackById: orgA.admin.id,
+      notes:
+        "Elevated RSVP write latency in production; rolled back rather than debugging live.",
+    },
+  });
+
+  await prisma.deployment.upsert({
+    where: { id: "66666666-6666-4666-8666-666666666665" },
+    update: {},
+    create: {
+      id: "66666666-6666-4666-8666-666666666665",
+      environment: "PRODUCTION",
+      status: "SUCCESS",
+      health: "HEALTHY",
+      commitHash: "feedface0000000000000000000000000000000",
+      commitMessage:
+        "Rollback to fdeface0: Hotfix: guard cache warming behind a feature flag",
+      branch: "hotfix/cache-warming-guard",
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      triggeredById: orgA.admin.id,
+      previousDeploymentId: "66666666-6666-4666-8666-666666666663",
+      createdAt: new Date(deploy4Start.getTime() + 1200 * 1000),
+      startedAt: new Date(deploy4Start.getTime() + 1200 * 1000),
+      completedAt: new Date(deploy4Start.getTime() + 1220 * 1000),
+      durationSeconds: 20,
+      healthCheckedAt: new Date(deploy4Start.getTime() + 1220 * 1000),
+      notes:
+        "Elevated RSVP write latency in production; rolled back rather than debugging live.",
+    },
+  });
+
+  // Recent, healthy deploy — most recent row for the dashboard widget.
+  const deploy6Start = daysAgo(1, 15);
+  await prisma.deployment.upsert({
+    where: { id: "66666666-6666-4666-8666-666666666666" },
+    update: {},
+    create: {
+      id: "66666666-6666-4666-8666-666666666666",
+      environment: "PRODUCTION",
+      status: "SUCCESS",
+      health: "HEALTHY",
+      commitHash: "0ff1ce0000000000000000000000000000000000",
+      commitMessage: "Update README with local dev setup",
+      branch: "docs/dev-setup",
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      triggeredById: orgA.admin.id,
+      createdAt: deploy6Start,
+      startedAt: deploy6Start,
+      completedAt: new Date(deploy6Start.getTime() + 35 * 1000),
+      durationSeconds: 35,
+      healthCheckedAt: new Date(deploy6Start.getTime() + 35 * 1000),
+    },
+  });
+
+  // Staging deploy in a different environment, so the environment tabs
+  // on /dashboard/deployments aren't empty for anything but Preview/Dev.
+  await prisma.deployment.upsert({
+    where: { id: "66666666-6666-4666-8666-666666666667" },
+    update: {},
+    create: {
+      id: "66666666-6666-4666-8666-666666666667",
+      environment: "STAGING",
+      status: "SUCCESS",
+      health: "HEALTHY",
+      commitHash: "5ca1ab1e0000000000000000000000000000000",
+      commitMessage: "Fix race condition in meeting RSVP upsert",
+      branch: "fix/rsvp-race",
+      organizationId: orgA.org.id,
+      projectId: orgA.project.id,
+      triggeredById: orgA.member.id,
+      createdAt: daysAgo(4, 9),
+      startedAt: daysAgo(4, 9),
+      completedAt: new Date(daysAgo(4, 9).getTime() + 40 * 1000),
+      durationSeconds: 40,
+      healthCheckedAt: new Date(daysAgo(4, 9).getTime() + 40 * 1000),
+    },
+  });
+
   console.log("Demo seed complete:", {
     orgA: orgA.org.slug,
     orgB: orgB.org.slug,

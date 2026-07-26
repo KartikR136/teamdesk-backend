@@ -4,7 +4,7 @@ import { DashboardController } from "../controller/dashboard.controller";
 import { DashboardService } from "../service/dashboard.service";
 import { DashboardRepository } from "../repository/dashboard.repository";
 import { NativePullRequestProvider } from "../providers/pullRequest/NativePullRequestProvider";
-import { MockDeploymentProvider } from "../providers/deployment/MockDeploymentProvider";
+import { NativeDeploymentProvider } from "../providers/deployment/NativeDeploymentProvider";
 import { MockBuildHealthProvider } from "../providers/buildHealth/MockBuildHealthProvider";
 import { NativeMeetingCalendarProvider } from "../providers/calendar/NativeMeetingCalendarProvider";
 import { ActivityLogCodingStatsProvider } from "../providers/codingStats/ActivityLogCodingStatsProvider";
@@ -18,7 +18,7 @@ import { DashboardSummaryService } from "../providers/ai/DashboardSummaryService
 const service = new DashboardService({
   repository: new DashboardRepository(),
   pullRequestProvider: new NativePullRequestProvider(),
-  deploymentProvider: new MockDeploymentProvider("vercel"),
+  deploymentProvider: new NativeDeploymentProvider(),
   buildHealthProvider: new MockBuildHealthProvider(),
   calendarProvider: new NativeMeetingCalendarProvider(),
   codingStatsProvider: new ActivityLogCodingStatsProvider(),

@@ -189,6 +189,32 @@ export async function resolveOrgFromPullRequest(
   next();
 }
 
+// Same pattern for Deployment-scoped routes (status update, rollback,
+// health check) — never trusts a client-supplied organizationId.
+export async function resolveOrgFromDeployment(
+  req: OrgScopedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const deploymentId = req.params.deploymentId;
+
+  if (typeof deploymentId !== "string") {
+    return res.status(400).json({ error: "Invalid deployment id" });
+  }
+
+  const deployment = await prisma.deployment.findUnique({
+    where: { id: deploymentId },
+    select: { organizationId: true },
+  });
+
+  if (!deployment) {
+    return res.status(404).json({ error: "Deployment not found" });
+  }
+
+  req.organizationId = deployment.organizationId;
+  next();
+}
+
 // Same pattern for PR-comment-scoped routes (edit/delete a single PR
 // comment), mirroring resolveOrgFromComment's Comment -> Issue ->
 // organizationId lookup but through PullRequest instead.

@@ -105,6 +105,20 @@ export interface DeploymentDto {
   durationSeconds: number;
   triggeredBy: string;
   deployedAt: string;
+  // Everything below is additive — same convention PullRequestDto's
+  // extra fields used. Original frontend Deployment type only declared
+  // the fields above (backed by MockDeploymentProvider, which never
+  // returned real data). These extra fields are all optional so existing
+  // widget code keeps working untouched; DeploymentsCard.tsx's rollback/
+  // health-check affordances and the new /dashboard/deployments pages
+  // opt into them.
+  organizationId?: string;
+  organizationName?: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  health?: "UNKNOWN" | "HEALTHY" | "DEGRADED" | "UNHEALTHY";
+  rolledBack?: boolean;
+  url?: string;
 }
 
 export interface BuildHealthDto {

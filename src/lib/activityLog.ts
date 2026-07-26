@@ -48,6 +48,14 @@ export const ActivityAction = {
   PR_COMMENT_CREATED: "PR_COMMENT_CREATED",
   PR_ISSUE_LINKED: "PR_ISSUE_LINKED",
   PR_ISSUE_UNLINKED: "PR_ISSUE_UNLINKED",
+  // Deployments — mirrors the PR_* convention. Rollback and health-check
+  // updates get their own actions (not folded into DEPLOYMENT_STATUS_
+  // CHANGED) for the same audit-worthy-event reasoning as PR_MERGED being
+  // separate from PR_UPDATED.
+  DEPLOYMENT_CREATED: "DEPLOYMENT_CREATED",
+  DEPLOYMENT_STATUS_CHANGED: "DEPLOYMENT_STATUS_CHANGED",
+  DEPLOYMENT_ROLLED_BACK: "DEPLOYMENT_ROLLED_BACK",
+  DEPLOYMENT_HEALTH_CHECKED: "DEPLOYMENT_HEALTH_CHECKED",
 } as const;
 
 export type ActivityActionType =
