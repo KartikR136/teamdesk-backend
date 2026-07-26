@@ -15,6 +15,7 @@ import meetingsRouter from "./routes/meetings";
 import pullRequestsRouter from "./routes/pullRequests";
 import deploymentsRouter from "./routes/deployments";
 import dashboardRouter from "./modules/dashboard/routes/dashboard.routes";
+import digestRouter from "./modules/dashboard/routes/digest.routes";
 import { errorHandler } from "./middleware/errorHandler";
 import {
   loginLimiter,
@@ -75,6 +76,7 @@ app.use("/api", meetingsRouter); // has full nested paths already (organizations
 app.use("/api", pullRequestsRouter); // has full nested paths already (organizations/:id/pull-requests, pull-requests/:id, .../review|merge|close|reopen|reviewers|issues|comments, pr-comments/:id)
 app.use("/api", deploymentsRouter); // has full nested paths already (organizations/:id/deployments, .../deployments/metrics/dora, deployments/:id, .../status|health|rollback)
 app.use("/api/dashboard", dashboardRouter); // intentionally cross-org — see dashboard.controller.ts
+app.use("/api/dashboard/digest", digestRouter); // cron-secret protected, not user-session protected
 
 // Attack-console demo routes — only exist at all when DEMO_MODE is set.
 // See THREAT_MODEL.md for why this must never be enabled against a

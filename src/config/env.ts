@@ -19,6 +19,23 @@ export const env = {
     csrfEnvValue !== undefined
       ? csrfEnvValue === "true"
       : process.env.NODE_ENV !== "test",
+
+  // AI dashboard summary. Unset/missing key -> automatic fallback to the
+  // deterministic template generator (DashboardSummaryService), so the
+  // feature degrades gracefully in every environment that hasn't
+  // configured it rather than throwing.
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  aiSummaryModel: process.env.AI_SUMMARY_MODEL || "claude-sonnet-4-6",
+  // How long a cached summary is considered fresh, regardless of whether
+  // the underlying data changed (belt-and-suspenders alongside the
+  // contextHash check — caps worst-case staleness even if we ever add an
+  // input to the hash and forget to bump it).
+  aiSummaryCacheTtlMinutes: Number(process.env.AI_SUMMARY_CACHE_TTL_MINUTES) || 120,
+
+  // Optional daily-digest webhook (Slack incoming webhook URL, or any
+  // endpoint accepting { text: string }). Feature no-ops if unset.
+  digestWebhookUrl: process.env.DIGEST_WEBHOOK_URL,
+  digestCronSecret: process.env.DIGEST_CRON_SECRET,
 };
 
 if (!env.databaseUrl) throw new Error("DATABASE_URL is not set in .env");

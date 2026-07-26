@@ -8,7 +8,7 @@ import { NativeDeploymentProvider } from "../providers/deployment/NativeDeployme
 import { MockBuildHealthProvider } from "../providers/buildHealth/MockBuildHealthProvider";
 import { NativeMeetingCalendarProvider } from "../providers/calendar/NativeMeetingCalendarProvider";
 import { ActivityLogCodingStatsProvider } from "../providers/codingStats/ActivityLogCodingStatsProvider";
-import { DashboardSummaryService } from "../providers/ai/DashboardSummaryService";
+import { AnthropicDashboardSummaryService } from "../providers/ai/AnthropicDashboardSummaryService";
 
 // Composition root for the dashboard module: this is the one place that
 // decides which concrete provider implementation backs each interface.
@@ -22,8 +22,10 @@ const service = new DashboardService({
   buildHealthProvider: new MockBuildHealthProvider(),
   calendarProvider: new NativeMeetingCalendarProvider(),
   codingStatsProvider: new ActivityLogCodingStatsProvider(),
-  summaryService: new DashboardSummaryService(),
+  summaryService: new AnthropicDashboardSummaryService(),
 });
+
+export { service as dashboardService };
 
 const controller = new DashboardController(service);
 

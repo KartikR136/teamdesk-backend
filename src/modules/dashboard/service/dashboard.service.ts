@@ -4,7 +4,10 @@ import { DeploymentProvider } from "../providers/deployment/DeploymentProvider";
 import { BuildHealthProvider } from "../providers/buildHealth/BuildHealthProvider";
 import { CalendarProvider } from "../providers/calendar/CalendarProvider";
 import { CodingStatsProvider } from "../providers/codingStats/CodingStatsProvider";
-import { DashboardSummaryService } from "../providers/ai/DashboardSummaryService";
+import {
+  AnthropicDashboardSummaryService,
+  buildRichContext,
+} from "../providers/ai/AnthropicDashboardSummaryService";
 import { DashboardHomeDto, QuickActionDto } from "../dto/dashboard.dto";
 
 export interface DashboardServiceDeps {
@@ -14,7 +17,11 @@ export interface DashboardServiceDeps {
   buildHealthProvider: BuildHealthProvider;
   calendarProvider: CalendarProvider;
   codingStatsProvider: CodingStatsProvider;
-  summaryService: DashboardSummaryService;
+  // Real LLM-backed summary generator. Falls back to the deterministic
+  // template internally (see AnthropicDashboardSummaryService) whenever
+  // no API key is configured or the API call fails, so this is safe to
+  // use in every environment.
+  summaryService: AnthropicDashboardSummaryService;
 }
 
 // Static for now — mirrors the frontend's own QuickActionsCard.tsx, which
@@ -81,12 +88,30 @@ export class DashboardService {
       repository.getRecentlyViewedIssues(userId),
     ]);
 
-    const aiSummary = this.deps.summaryService.generateSummary({
-      assignedTasks,
-      unreadNotificationCount,
-      recentDeploymentCount: deploymentsResult.data.length,
-      pendingReviewCount: pendingReviewsResult.data.length,
-    });
+    const now = new Date();
+    const overdueTasks = assignedTasks.filter(
+      (t) => t.dueDate !== null && new Date(t.dueDate) < now && t.status !== "DONE",
+    );
+    const topPriorityTasks = assignedTasks
+      .filter((t) => t.priority === "URGENT" || t.priority === "HIGH")
+      .slice(0, 5);
+
+    const richContext = buildRichContext(
+      {
+        assignedTasks,
+        unreadNotificationCount,
+        recentDeploymentCount: deploymentsResult.data.length,
+        pendingReviewCount: pendingReviewsResult.data.length,
+      },
+      {
+        overdueTasks,
+        topPriorityTasks,
+        recentNotificationMessages: notifications.slice(0, 5).map((n) => n.message),
+        upcomingMeetingTitles: meetingsResult.data.map((m) => m.title),
+      },
+    );
+
+    const aiSummary = await this.deps.summaryService.generateSummary(userId, richContext);
 
     return {
       aiSummary,

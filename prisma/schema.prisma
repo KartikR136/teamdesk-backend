@@ -45,6 +45,7 @@ model User {
   createdMeetings       Meeting[]             @relation("MeetingCreator")
   meetingAttendances    MeetingAttendee[]     @relation("MeetingAttendance")
   authoredPullRequests  PullRequest[]         @relation("PullRequestAuthor")
+  aiSummaryCaches       AISummaryCache[]
   prReviews             PullRequestReviewer[] @relation("PullRequestReviewerUser")
   triggeredDeployments  Deployment[]          @relation("DeploymentTriggeredBy")
   rolledBackDeployments Deployment[]          @relation("DeploymentRolledBackBy")
@@ -648,4 +649,25 @@ model Deployment {
   @@index([organizationId, environment, createdAt])
   @@index([projectId])
   @@index([status])
+}
+
+// AI-generated "Today's Focus" dashboard summary, cached per user so we
+// don't hit the LLM on every dashboard load. `contextHash` is a hash of
+// the inputs that fed the summary (assigned task ids + statuses, unread
+// count, pr/deploy counts) — if the hash hasn't changed since the last
+// generation, the cached copy is still accurate and we skip the API call
+// entirely. TTL is enforced in application code (see AISummaryCacheStore),
+// not here, so the freshness window can change without a migration.
+model AISummaryCache {
+  id           String   @id @default(uuid())
+  userId       String
+  headline     String
+  bullets      Json // string[]
+  contextHash  String
+  model        String // which provider/model produced this (e.g. "claude-sonnet-4-6", "template-fallback")
+  generatedAt  DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
+  @@index([userId, generatedAt])
 }
