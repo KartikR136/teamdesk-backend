@@ -188,6 +188,53 @@ export interface CodingStatsDto {
   reviewsCompletedThisWeek: number;
   commitsThisWeek: number;
   focusHoursThisWeek: number;
+  // Everything below is additive — original frontend CodingStats type only
+  // declared the five fields above. All optional so the existing
+  // CodingStreakCard keeps working untouched; the new /dashboard/coding-streak
+  // detail page and an upgraded card opt into them.
+  longestStreakDays?: number;
+  streakFreezesAvailable?: number;
+  weeklyCommitGoal?: number;
+  weeklyIssueGoal?: number;
+  commitGoalProgress?: number; // 0-100
+  issueGoalProgress?: number; // 0-100
+}
+
+export type HeatmapCellDto = {
+  date: string; // YYYY-MM-DD
+  level: 0 | 1 | 2 | 3; // activity intensity, for shading
+  frozen: boolean; // covered by a streak freeze rather than real activity
+};
+
+export type AchievementDto = {
+  type: string;
+  label: string;
+  description: string;
+  unlockedAt: string; // ISO
+};
+
+export interface CodingStreakDetailDto {
+  currentStreakDays: number;
+  longestStreakDays: number;
+  streakFreezesAvailable: number;
+  heatmap: HeatmapCellDto[]; // last 90 days, oldest first
+  achievements: AchievementDto[];
+  weeklyCommitGoal: number;
+  weeklyIssueGoal: number;
+  commitsThisWeek: number;
+  issuesCompletedThisWeek: number;
+  reviewsCompletedThisWeek: number;
+  focusHoursThisWeek: number;
+  webhookUrl: string | null; // null if backend base URL isn't configured
+  githubActionsSnippet: string;
+}
+
+export interface LeaderboardEntryDto {
+  userId: string;
+  name: string;
+  currentStreakDays: number;
+  longestStreakDays: number;
+  isSelf: boolean;
 }
 
 export interface AISummaryDto {

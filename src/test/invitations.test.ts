@@ -1,15 +1,24 @@
 import request from "supertest";
 import { app } from "../app";
+import { prisma } from "../lib/prisma";
 import { extractCookie } from "./testUtils";
 
-// This file uses 2 signupAndLogin pairs per test (8 total requests), staying
-// under the shared authLimiter budget (10 req/15min across signup+login+refresh).
-
+// Invitation creation now requires the inviting admin's own email to be
+// verified (see requireVerifiedEmail.ts / invitations.ts). This suite
+// isn't testing the verification flow itself — that's
+// emailVerification.test.ts's job — so it marks the account verified
+// directly via Prisma rather than round-tripping through
+// signup -> console-log-scrape -> /verify-email for every user created
+// here.
 async function signupAndLogin(email: string): Promise<string> {
-  await request(app).post("/api/auth/signup").send({
+  const signupRes = await request(app).post("/api/auth/signup").send({
     email,
     password: "correctpassword",
     name: "Test User",
+  });
+  await prisma.user.update({
+    where: { id: signupRes.body.id },
+    data: { emailVerified: true, emailVerifiedAt: new Date() },
   });
 
   const loginRes = await request(app).post("/api/auth/login").send({
@@ -137,5 +146,37 @@ describe("invitations", () => {
       .get(`/api/organizations/${orgId}/invitations`)
       .set("Cookie", [adminCookie]);
     expect(orgInvitesRes.body.data.length).toBe(0);
+  });
+
+  it("blocks invitation creation when the inviting admin's own email isn't verified", async () => {
+    // Deliberately does NOT use signupAndLogin's Prisma verify-shortcut —
+    // this test is specifically about the unverified path.
+    const email = "unverified-admin@example.com";
+    await request(app).post("/api/auth/signup").send({
+      email,
+      password: "correctpassword",
+      name: "Unverified Admin",
+    });
+    const loginRes = await request(app)
+      .post("/api/auth/login")
+      .send({ email, password: "correctpassword" });
+    const adminCookie = extractCookie(
+      loginRes.headers["set-cookie"],
+      "accessToken",
+    );
+
+    const orgRes = await request(app)
+      .post("/api/organizations")
+      .set("Cookie", [adminCookie])
+      .send({ name: "Unverified Org", slug: "unverified-org" });
+    const orgId = orgRes.body.id as string;
+
+    const inviteRes = await request(app)
+      .post(`/api/organizations/${orgId}/invitations`)
+      .set("Cookie", [adminCookie])
+      .send({ email: "someone@example.com", role: "VIEWER" });
+
+    expect(inviteRes.status).toBe(403);
+    expect(inviteRes.body.code).toBe("EMAIL_NOT_VERIFIED");
   });
 });

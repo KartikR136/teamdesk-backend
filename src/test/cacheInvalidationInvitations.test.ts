@@ -1,12 +1,22 @@
 import request from "supertest";
 import { app } from "../app";
+import { prisma } from "../lib/prisma";
 import { extractCookie } from "./testUtils";
 
+// Invitation creation now requires the inviting admin's own email to be
+// verified (see requireVerifiedEmail.ts / invitations.ts). This suite
+// isn't testing the verification flow itself, so it marks the account
+// verified directly via Prisma rather than round-tripping through the
+// full signup -> verify-email flow for every user created here.
 async function signupAndLogin(email: string): Promise<string> {
-  await request(app).post("/api/auth/signup").send({
+  const signupRes = await request(app).post("/api/auth/signup").send({
     email,
     password: "correctpassword",
     name: "Test User",
+  });
+  await prisma.user.update({
+    where: { id: signupRes.body.id },
+    data: { emailVerified: true, emailVerifiedAt: new Date() },
   });
 
   const loginRes = await request(app).post("/api/auth/login").send({

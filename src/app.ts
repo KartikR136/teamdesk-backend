@@ -16,14 +16,18 @@ import pullRequestsRouter from "./routes/pullRequests";
 import deploymentsRouter from "./routes/deployments";
 import buildPipelinesRouter from "./routes/buildPipelines";
 import ciWebhooksRouter from "./routes/ciWebhooks";
+import gitWebhooksRouter from "./routes/gitWebhooks";
 import dashboardRouter from "./modules/dashboard/routes/dashboard.routes";
 import digestRouter from "./modules/dashboard/routes/digest.routes";
+import codingStreakRouter from "./modules/dashboard/routes/codingStreak.routes";
 import { errorHandler } from "./middleware/errorHandler";
 import {
   loginLimiter,
   signupLimiter,
   refreshLimiter,
   forgotPasswordLimiter,
+  verifyEmailLimiter,
+  resendVerificationLimiter,
   generalLimiter,
 } from "./middleware/rateLimiters";
 import demoAttacksRouter from "./routes/demoAttacks";
@@ -63,6 +67,8 @@ app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/signup", signupLimiter);
 app.use("/api/auth/refresh", refreshLimiter);
 app.use("/api/auth/forgot-password", forgotPasswordLimiter);
+app.use("/api/auth/verify-email", verifyEmailLimiter);
+app.use("/api/auth/resend-verification", resendVerificationLimiter);
 app.use("/api", generalLimiter);
 app.use("/api/health", healthRouter);
 app.use("/api/auth", authRouter);
@@ -79,8 +85,10 @@ app.use("/api", pullRequestsRouter); // has full nested paths already (organizat
 app.use("/api", deploymentsRouter); // has full nested paths already (organizations/:id/deployments, .../deployments/metrics/dora, deployments/:id, .../status|health|rollback)
 app.use("/api", buildPipelinesRouter); // has full nested paths already (organizations/:id/build-pipelines|build-runs|build-health, build-pipelines/:id, .../runs|rotate-webhook, build-runs/:id)
 app.use("/api/webhooks/ci", ciWebhooksRouter); // public — authenticated by the pipeline's own webhookToken, not a user session
+app.use("/api/webhooks/git", gitWebhooksRouter); // public — authenticated by the user's own codingWebhookToken
 app.use("/api/dashboard", dashboardRouter); // intentionally cross-org — see dashboard.controller.ts
 app.use("/api/dashboard/digest", digestRouter); // cron-secret protected, not user-session protected
+app.use("/api/dashboard/coding-streak", codingStreakRouter); // detail/goals/focus-session/leaderboard + cron-secret maintenance
 
 // Attack-console demo routes — only exist at all when DEMO_MODE is set.
 // See THREAT_MODEL.md for why this must never be enabled against a

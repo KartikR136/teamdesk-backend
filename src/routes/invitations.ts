@@ -3,6 +3,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/requireAuth";
+import { requireVerifiedEmail } from "../middleware/requireVerifiedEmail";
 import {
   requireRole,
   OrgScopedRequest,
@@ -31,12 +32,16 @@ const createInvitationSchema = z.object({
 });
 
 // POST /api/organizations/:organizationId/invitations
-// ADMIN-only. Invites are keyed by email, not an existing userId — the
-// invitee doesn't need an account yet ("Email placeholder architecture").
+// ADMIN-only, and now requires the inviting admin's own email to be
+// verified — an invitation asks the invitee to trust that this account
+// is who it claims to be, which an unverified (possibly fake/typo'd)
+// email can't yet back up. See requireVerifiedEmail.ts for the full list
+// of actions this same reasoning applies to.
 router.post(
   "/organizations/:organizationId/invitations",
   resolveOrgFromParam("organizationId"),
   requireRole("ADMIN"),
+  requireVerifiedEmail,
   async (req: OrgScopedRequest, res) => {
     const parsed = createInvitationSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -57,11 +62,9 @@ router.post(
       where: { organizationId, email, status: "PENDING" },
     });
     if (existingPending) {
-      return res
-        .status(400)
-        .json({
-          error: "There is already a pending invitation for this email",
-        });
+      return res.status(400).json({
+        error: "There is already a pending invitation for this email",
+      });
     }
 
     const invitation = await prisma.invitation.create({

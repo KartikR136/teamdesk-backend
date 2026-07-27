@@ -36,6 +36,8 @@ async function seedOrg(opts: {
       email: opts.adminEmail,
       name: `${opts.name} Admin`,
       passwordHash,
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
     },
   });
 
@@ -46,6 +48,8 @@ async function seedOrg(opts: {
       email: opts.memberEmail,
       name: `${opts.name} Member`,
       passwordHash,
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
     },
   });
 
@@ -482,6 +486,62 @@ async function main() {
       durationSeconds: 40,
       healthCheckedAt: new Date(daysAgo(4, 9).getTime() + 40 * 1000),
     },
+  });
+
+  // Coding Streak demo data — gives the /dashboard/coding-streak page (and
+  // the CodingStreakCard widget) real numbers immediately after seeding,
+  // instead of every field starting at an honest-but-boring zero.
+  //
+  // orgA.admin gets:
+  //   - 8 consecutive days of GitCommit rows ending today -> an 8-day
+  //     streak, which also crosses the STREAK_7 badge threshold (the
+  //     badge itself is awarded lazily by CodingStreakService on first
+  //     read, not seeded directly, so it's earned "for real" the first
+  //     time the page loads)
+  //   - 2 FocusSession logs this week
+  //   - weeklyCommitGoal left at the schema default (20) so the seeded 8
+  //     commits show a partially-filled, not maxed-out, progress bar
+  const codingStreakDaysAgo = (n: number, hour = 10) => {
+    const d = new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
+    d.setHours(hour, 0, 0, 0);
+    return d;
+  };
+
+  for (let i = 0; i < 8; i++) {
+    const committedAt = codingStreakDaysAgo(i, 11 + (i % 3));
+    await prisma.gitCommit.upsert({
+      where: { userId_sha: { userId: orgA.admin.id, sha: `demo-seed-commit-${i}` } },
+      update: {},
+      create: {
+        userId: orgA.admin.id,
+        organizationId: orgA.org.id,
+        sha: `demo-seed-commit-${i}`,
+        message: `Demo commit ${i + 1}/8 for the coding streak seed`,
+        repoName: "demo-org-a/teamdesk",
+        branch: "main",
+        additions: 12 + i * 3,
+        deletions: 2 + i,
+        committedAt,
+      },
+    });
+  }
+
+  await prisma.focusSession.createMany({
+    data: [
+      {
+        userId: orgA.admin.id,
+        minutes: 90,
+        note: "Deep work on the dashboard redesign",
+        loggedAt: codingStreakDaysAgo(1, 15),
+      },
+      {
+        userId: orgA.admin.id,
+        minutes: 45,
+        note: "Code review + bug triage",
+        loggedAt: codingStreakDaysAgo(0, 10),
+      },
+    ],
+    skipDuplicates: true,
   });
 
   console.log("Demo seed complete:", {

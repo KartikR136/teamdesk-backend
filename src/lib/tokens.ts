@@ -37,3 +37,15 @@ export function generatePasswordResetToken(): string {
 export function hashPasswordResetToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
+
+// Email verification tokens follow the identical opaque-random-string /
+// SHA-256-lookup-hash pattern as refresh and password-reset tokens above.
+// Proves the signup email is a real mailbox the account owner controls,
+// which format validation (z.string().email()) alone can't do.
+export function generateEmailVerificationToken(): string {
+  return crypto.randomBytes(64).toString("hex");
+}
+
+export function hashEmailVerificationToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}

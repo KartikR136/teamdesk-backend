@@ -9,18 +9,64 @@ import {
   hashRefreshToken,
   generatePasswordResetToken,
   hashPasswordResetToken,
+  generateEmailVerificationToken,
+  hashEmailVerificationToken,
 } from "../lib/tokens";
-import { sendPasswordResetEmail } from "../lib/email";
+import { sendPasswordResetEmail, sendVerificationEmail } from "../lib/email";
+import { normalizeEmail, isDisposableEmail } from "../lib/emailValidation";
 
 const router = Router();
 
 const signupSchema = z.object({
-  email: z.string().email(),
+  // .email() only checks shape. transform() normalizes case/whitespace so
+  // "Foo@Bar.com" and "foo@bar.com" collide on the uniqueness check
+  // instead of creating two accounts for the same real address. The
+  // disposable-domain check is a superRefine (not a second .email()
+  // chain) so it can return a specific, actionable error message.
+  email: z
+    .string()
+    .email()
+    .transform((e) => normalizeEmail(e))
+    .superRefine((email, ctx) => {
+      if (isDisposableEmail(email)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "Disposable or temporary email addresses aren't allowed. Please use a permanent email address.",
+        });
+      }
+    }),
   password: z.string().min(8),
   name: z.string().min(1),
 });
 
 const REFRESH_TOKEN_TTL_DAYS = 30;
+const EMAIL_VERIFICATION_TTL_HOURS = 24;
+
+async function issueEmailVerification(userId: string, email: string) {
+  const rawToken = generateEmailVerificationToken();
+  await prisma.emailVerificationToken.create({
+    data: {
+      userId,
+      tokenHash: hashEmailVerificationToken(rawToken),
+      expiresAt: new Date(
+        Date.now() + EMAIL_VERIFICATION_TTL_HOURS * 60 * 60 * 1000,
+      ),
+    },
+  });
+
+  const verifyLink = `${process.env.FRONTEND_URL ?? "http://localhost:3000"}/verify-email?token=${rawToken}`;
+
+  try {
+    await sendVerificationEmail(email, verifyLink);
+  } catch (err) {
+    // Same swallow-and-log reasoning as forgot-password: a failed send
+    // shouldn't fail the signup request itself (the account is real
+    // either way) or leak provider status to the client. The user can
+    // always retry via /resend-verification.
+    console.error("sendVerificationEmail failed", err);
+  }
+}
 
 function refreshCookieOptions() {
   const isProd = process.env.NODE_ENV === "production";
@@ -65,7 +111,7 @@ async function issueTokensAndSetCookies(res: any, userId: string) {
 router.get("/me", requireAuth, async (req: AuthedRequest, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.userId! },
-    select: { id: true, email: true, name: true },
+    select: { id: true, email: true, name: true, emailVerified: true },
   });
   if (!user) return res.status(401).json({ error: "Not authenticated" });
   res.json(user);
@@ -87,15 +133,32 @@ router.post("/signup", async (req, res) => {
 
   const passwordHash = await hashPassword(password);
   const user = await prisma.user.create({
-    data: { email, passwordHash, name },
+    data: { email, passwordHash, name, emailVerified: false },
   });
 
+  await issueEmailVerification(user.id, user.email);
+
+  // We still let the user in immediately rather than blocking signup on
+  // verification — that's a UX call, not a security one. The security
+  // property this flow actually needs is: an unverified account can't
+  // masquerade as having a mailbox it doesn't control. Anything that
+  // depends on that (e.g. sending real notifications to this address,
+  // invitations resolving by email, etc.) should check emailVerified
+  // itself rather than this endpoint gatekeeping login.
   await issueTokensAndSetCookies(res, user.id);
-  res.status(201).json({ id: user.id, email: user.email, name: user.name });
+  res.status(201).json({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    emailVerified: user.emailVerified,
+  });
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z
+    .string()
+    .email()
+    .transform((e) => normalizeEmail(e)),
   password: z.string(),
 });
 
@@ -117,7 +180,12 @@ router.post("/login", async (req, res) => {
   if (!valid) return res.status(401).json(invalidMsg);
 
   await issueTokensAndSetCookies(res, user.id);
-  res.json({ id: user.id, email: user.email, name: user.name });
+  res.json({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    emailVerified: user.emailVerified,
+  });
 });
 
 router.post("/refresh", async (req, res) => {
@@ -180,7 +248,9 @@ router.post("/forgot-password", async (req, res) => {
       "If an account exists for this email, a password reset link has been sent.",
   };
 
-  const user = await prisma.user.findUnique({ where: { email: parsed.data.email } });
+  const user = await prisma.user.findUnique({
+    where: { email: parsed.data.email },
+  });
   if (!user) {
     return res.json(genericResponse);
   }
@@ -266,6 +336,79 @@ router.post("/reset-password", async (req, res) => {
   });
 
   res.json({ status: "password reset" });
+});
+
+const verifyEmailSchema = z.object({
+  token: z.string().min(1),
+});
+
+router.post("/verify-email", async (req, res) => {
+  const parsed = verifyEmailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request" });
+  }
+
+  // Same deliberately generic failure message regardless of which
+  // specific check fails (token not found / already used / expired) —
+  // same reasoning as reset-password's invalidMsg.
+  const invalidMsg = { error: "This link is invalid or has expired." };
+
+  const tokenHash = hashEmailVerificationToken(parsed.data.token);
+  const stored = await prisma.emailVerificationToken.findUnique({
+    where: { tokenHash },
+  });
+
+  if (!stored || stored.usedAt || stored.expiresAt < new Date()) {
+    return res.status(400).json(invalidMsg);
+  }
+
+  // Mark the token used and the account verified in one transaction, same
+  // single-use-enforcement pattern as reset-password, so a token can
+  // never be replayed even if a later step here were to fail.
+  await prisma.$transaction([
+    prisma.emailVerificationToken.update({
+      where: { id: stored.id },
+      data: { usedAt: new Date() },
+    }),
+    prisma.user.update({
+      where: { id: stored.userId },
+      data: { emailVerified: true, emailVerifiedAt: new Date() },
+    }),
+  ]);
+
+  res.json({ status: "email verified" });
+});
+
+const resendVerificationSchema = z.object({
+  email: z
+    .string()
+    .email()
+    .transform((e) => normalizeEmail(e)),
+});
+
+router.post("/resend-verification", async (req, res) => {
+  const parsed = resendVerificationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request" });
+  }
+
+  // Same account-enumeration reasoning as /forgot-password: identical
+  // response regardless of whether the email exists or is already
+  // verified, so this endpoint can't be used to probe either fact.
+  const genericResponse = {
+    message:
+      "If an account exists for this email and isn't yet verified, a new verification link has been sent.",
+  };
+
+  const user = await prisma.user.findUnique({
+    where: { email: parsed.data.email },
+  });
+  if (!user || user.emailVerified) {
+    return res.json(genericResponse);
+  }
+
+  await issueEmailVerification(user.id, user.email);
+  res.json(genericResponse);
 });
 
 export default router;

@@ -24,6 +24,7 @@ model Organization {
   deployments    Deployment[]
   buildPipelines BuildPipeline[]
   buildRuns      BuildRun[]
+  gitCommits     GitCommit[]
 }
 
 model User {
@@ -31,7 +32,10 @@ model User {
   email                 String                @unique
   passwordHash          String
   name                  String
+  emailVerified         Boolean               @default(false)
+  emailVerifiedAt       DateTime?
   createdAt             DateTime              @default(now())
+  emailVerificationTokens EmailVerificationToken[]
   activityLogs          ActivityLog[]
   comments              Comment[]
   decisions             DecisionLog[]
@@ -53,6 +57,69 @@ model User {
   rolledBackDeployments Deployment[]          @relation("DeploymentRolledBackBy")
   triggeredBuildRuns    BuildRun[]            @relation("BuildRunTriggeredBy")
   createdBuildPipelines BuildPipeline[]
+
+  // --- Coding Streak feature (additive) ---
+  longestStreakDays      Int                @default(0)
+  streakFreezesAvailable Int                @default(2)
+  lastFreezeRefillAt     DateTime           @default(now())
+  weeklyCommitGoal       Int                @default(20)
+  weeklyIssueGoal        Int                @default(5)
+  codingWebhookToken     String             @unique @default(uuid())
+  gitCommits             GitCommit[]
+  codingAchievements     CodingAchievement[]
+  streakFreezeUses       StreakFreezeUse[]
+  focusSessions          FocusSession[]
+}
+
+model GitCommit {
+  id             String        @id @default(uuid())
+  userId         String
+  organizationId String?
+  sha            String
+  message        String
+  repoName       String
+  branch         String?
+  additions      Int           @default(0)
+  deletions      Int           @default(0)
+  committedAt    DateTime
+  createdAt      DateTime      @default(now())
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, sha])
+  @@index([userId, committedAt])
+}
+
+model CodingAchievement {
+  id         String   @id @default(uuid())
+  userId     String
+  type       String
+  unlockedAt DateTime @default(now())
+  metadata   Json?
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model StreakFreezeUse {
+  id          String   @id @default(uuid())
+  userId      String
+  coveredDate String
+  usedAt      DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, coveredDate])
+}
+
+model FocusSession {
+  id       String   @id @default(uuid())
+  userId   String
+  minutes  Int
+  note     String?
+  loggedAt DateTime @default(now())
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, loggedAt])
 }
 
 model Membership {
@@ -226,6 +293,24 @@ model DecisionRelatedIssue {
 }
 
 model PasswordResetToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Mirrors PasswordResetToken's shape/reasoning exactly: a random opaque
+// token is emailed, only its SHA-256 hash is ever persisted, single-use
+// (usedAt) and time-boxed (expiresAt). Used to prove the signup email is
+// a real, reachable mailbox the account owner actually controls, since
+// format validation alone (z.string().email()) accepts syntactically
+// valid addresses that don't exist or aren't the user's.
+model EmailVerificationToken {
   id        String    @id @default(uuid())
   tokenHash String    @unique
   userId    String

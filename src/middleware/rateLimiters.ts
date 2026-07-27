@@ -1,5 +1,12 @@
 import rateLimit from "express-rate-limit";
 
+// In test mode the signup/login/refresh limiters are disabled — their
+// max would otherwise be exhausted by the test suite's own setup calls
+// (e.g. emailVerification.test.ts does 11 signups against a limit of 10).
+// The limiters that are specifically tested (resendVerificationLimiter,
+// forgotPasswordLimiter) keep their real limits so those tests still work.
+const isTest = process.env.NODE_ENV === "test";
+
 // Each auth-adjacent endpoint gets its own bucket instead of one shared
 // "authLimiter". Why this matters: a shared bucket means a burst of
 // legitimate signups (or a legitimate retry loop against /refresh) eats
@@ -12,7 +19,7 @@ import rateLimit from "express-rate-limit";
 // this is the endpoint an attacker actually wants to hammer.
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 attempts per IP per window
+  max: isTest ? 10_000 : 10, // 10 attempts per IP per window
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many login attempts, please try again later" },
@@ -23,7 +30,7 @@ export const loginLimiter = rateLimit({
 // the login budget.
 export const signupLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: isTest ? 10_000 : 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many signup attempts, please try again later" },
@@ -36,7 +43,7 @@ export const signupLimiter = rateLimit({
 // brute-force attempt.
 export const refreshLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: isTest ? 10_000 : 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many refresh attempts, please try again later" },
@@ -45,7 +52,7 @@ export const refreshLimiter = rateLimit({
 // Looser general limiter — protects against abuse without disrupting normal use.
 export const generalLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 100,
+  max: isTest ? 10_000 : 100,
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -71,7 +78,32 @@ export const forgotPasswordLimiter = rateLimit({
 // generous bucket still costs nothing and blocks trivial request flooding.
 export const resetPasswordLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: isTest ? 10_000 : 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests, please try again later" },
+});
+
+// /verify-email: same reasoning as resetPasswordLimiter — the token's
+// own unguessability (64 random bytes), expiry, and single-use
+// enforcement are the real protection, this just blocks trivial flooding.
+export const verifyEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isTest ? 10_000 : 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests, please try again later" },
+});
+
+// /resend-verification: an unlimited resend endpoint is the same
+// email-bombing vector forgotPasswordLimiter guards against for password
+// reset — an attacker who knows an address could spam it with
+// verification emails. Own bucket, same shape as forgotPasswordLimiter.
+// NOTE: kept at real limit even in test — emailVerification.test.ts
+// specifically tests this bucket and expects a 429.
+export const resendVerificationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests, please try again later" },

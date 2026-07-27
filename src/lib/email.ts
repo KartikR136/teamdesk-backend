@@ -28,7 +28,32 @@ export async function sendPasswordResetEmail(
 
   // Development / test: log the link so the flow is testable end-to-end
   // without needing real email infrastructure.
+  console.log(`\n[password reset] Would email ${email}:\n  ${resetLink}\n`);
+}
+
+// Same honest-stub reasoning as sendPasswordResetEmail above: no
+// provider wired up yet, so this logs to console in dev/test and fails
+// loudly (rather than silently no-op'ing) in production if one hasn't
+// been configured. Kept as a separate function rather than a shared
+// generic "send" helper so each flow's subject/copy/rate-limit story can
+// evolve independently without risk of cross-contamination.
+export async function sendVerificationEmail(
+  email: string,
+  verifyLink: string,
+): Promise<void> {
+  if (process.env.NODE_ENV === "production") {
+    if (!process.env.EMAIL_PROVIDER_CONFIGURED) {
+      throw new Error(
+        "sendVerificationEmail: no email provider is configured. " +
+          "Set EMAIL_PROVIDER_CONFIGURED and implement real sending here " +
+          "before enabling email verification in production.",
+      );
+    }
+    // Real provider integration goes here once one is chosen.
+    return;
+  }
+
   console.log(
-    `\n[password reset] Would email ${email}:\n  ${resetLink}\n`,
+    `\n[email verification] Would email ${email}:\n  ${verifyLink}\n`,
   );
 }

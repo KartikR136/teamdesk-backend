@@ -36,6 +36,13 @@ export const env = {
   // endpoint accepting { text: string }). Feature no-ops if unset.
   digestWebhookUrl: process.env.DIGEST_WEBHOOK_URL,
   digestCronSecret: process.env.DIGEST_CRON_SECRET,
+
+  // Used only to build the absolute, copy-pasteable git-push webhook URL
+  // returned by GET /api/dashboard/coding-streak (e.g.
+  // "https://api.yourteamdesk.com"). Unset -> webhookUrl comes back null
+  // and the frontend shows the relative path instead, so nothing breaks
+  // in environments that haven't set it.
+  backendBaseUrl: process.env.BACKEND_BASE_URL,
 };
 
 if (!env.databaseUrl) throw new Error("DATABASE_URL is not set in .env");
