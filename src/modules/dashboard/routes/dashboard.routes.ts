@@ -5,7 +5,7 @@ import { DashboardService } from "../service/dashboard.service";
 import { DashboardRepository } from "../repository/dashboard.repository";
 import { NativePullRequestProvider } from "../providers/pullRequest/NativePullRequestProvider";
 import { NativeDeploymentProvider } from "../providers/deployment/NativeDeploymentProvider";
-import { MockBuildHealthProvider } from "../providers/buildHealth/MockBuildHealthProvider";
+import { NativeBuildHealthProvider } from "../providers/buildHealth/NativeBuildHealthProvider";
 import { NativeMeetingCalendarProvider } from "../providers/calendar/NativeMeetingCalendarProvider";
 import { ActivityLogCodingStatsProvider } from "../providers/codingStats/ActivityLogCodingStatsProvider";
 import { AnthropicDashboardSummaryService } from "../providers/ai/AnthropicDashboardSummaryService";
@@ -19,7 +19,7 @@ const service = new DashboardService({
   repository: new DashboardRepository(),
   pullRequestProvider: new NativePullRequestProvider(),
   deploymentProvider: new NativeDeploymentProvider(),
-  buildHealthProvider: new MockBuildHealthProvider(),
+  buildHealthProvider: new NativeBuildHealthProvider(),
   calendarProvider: new NativeMeetingCalendarProvider(),
   codingStatsProvider: new ActivityLogCodingStatsProvider(),
   summaryService: new AnthropicDashboardSummaryService(),

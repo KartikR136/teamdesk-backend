@@ -8,20 +8,22 @@ datasource db {
 }
 
 model Organization {
-  id            String         @id @default(uuid())
-  name          String
-  slug          String         @unique
-  createdAt     DateTime       @default(now())
-  activityLogs  ActivityLog[]
-  decisions     DecisionLog[]
-  invitations   Invitation[]
-  issues        Issue[]
-  memberships   Membership[]
-  projects      Project[]
-  notifications Notification[]
-  meetings      Meeting[]
-  pullRequests  PullRequest[]
-  deployments   Deployment[]
+  id             String          @id @default(uuid())
+  name           String
+  slug           String          @unique
+  createdAt      DateTime        @default(now())
+  activityLogs   ActivityLog[]
+  decisions      DecisionLog[]
+  invitations    Invitation[]
+  issues         Issue[]
+  memberships    Membership[]
+  projects       Project[]
+  notifications  Notification[]
+  meetings       Meeting[]
+  pullRequests   PullRequest[]
+  deployments    Deployment[]
+  buildPipelines BuildPipeline[]
+  buildRuns      BuildRun[]
 }
 
 model User {
@@ -49,6 +51,8 @@ model User {
   prReviews             PullRequestReviewer[] @relation("PullRequestReviewerUser")
   triggeredDeployments  Deployment[]          @relation("DeploymentTriggeredBy")
   rolledBackDeployments Deployment[]          @relation("DeploymentRolledBackBy")
+  triggeredBuildRuns    BuildRun[]            @relation("BuildRunTriggeredBy")
+  createdBuildPipelines BuildPipeline[]
 }
 
 model Membership {
@@ -65,31 +69,33 @@ model Membership {
 }
 
 model Project {
-  id             String        @id @default(uuid())
+  id             String          @id @default(uuid())
   name           String
   description    String?
-  createdAt      DateTime      @default(now())
+  createdAt      DateTime        @default(now())
   organizationId String
   decisions      DecisionLog[]
   issues         Issue[]
   meetings       Meeting[]
   pullRequests   PullRequest[]
   deployments    Deployment[]
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  buildPipelines BuildPipeline[]
+  buildRuns      BuildRun[]
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
 }
 
 model Issue {
-  id               String                 @id @default(uuid())
+  id               String                   @id @default(uuid())
   title            String
   description      String?
-  status           IssueStatus            @default(TODO)
-  priority         IssuePriority          @default(MEDIUM)
+  status           IssueStatus              @default(TODO)
+  priority         IssuePriority            @default(MEDIUM)
   dueDate          DateTime?
   estimatePoints   Int?
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
   organizationId   String
   projectId        String
   creatorId        String
@@ -101,10 +107,10 @@ model Issue {
   recentlyViewedBy RecentlyViewedIssue[]
   meetingLinks     MeetingLinkedIssue[]
   pullRequestLinks PullRequestLinkedIssue[]
-  assignee         User?                  @relation("IssueAssignee", fields: [assigneeId], references: [id])
-  creator          User                   @relation("IssueCreator", fields: [creatorId], references: [id])
-  organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  project          Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignee         User?                    @relation("IssueAssignee", fields: [assigneeId], references: [id])
+  creator          User                     @relation("IssueCreator", fields: [creatorId], references: [id])
+  organization     Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project          Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
   @@index([organizationId, createdAt])
@@ -249,12 +255,14 @@ model Notification {
   issueId        String?
   pullRequestId  String?
   deploymentId   String?
+  buildRunId     String?
   recipient      User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
   actor          User?            @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   issue          Issue?           @relation(fields: [issueId], references: [id], onDelete: Cascade)
   pullRequest    PullRequest?     @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
   deployment     Deployment?      @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  buildRun       BuildRun?        @relation(fields: [buildRunId], references: [id], onDelete: Cascade)
 
   // Recipient's own feed, newest first — the dashboard's actual read pattern.
   @@index([recipientId, createdAt])
@@ -299,6 +307,8 @@ enum NotificationType {
   // comment on that mapping compromise for PR-era precedent).
   DEPLOYMENT_SUCCEEDED
   DEPLOYMENT_FAILED
+  BUILD_FAILED
+  BUILD_FIXED
 }
 
 enum Role {
@@ -478,43 +488,44 @@ enum PRReviewStatus {
 }
 
 model PullRequest {
-  id              String              @id @default(uuid())
-  title           String
-  description     String?
+  id             String                   @id @default(uuid())
+  title          String
+  description    String?
   // Free-text, not a real git integration — lets a team track review
   // requests for work hosted anywhere (this repo, a private GitLab, even
   // a design doc) without needing a GitHub App connection at all.
-  repoName        String
-  sourceBranch    String
-  targetBranch    String              @default("main")
-  status          PRStatus            @default(OPEN)
-  mergeStatus     PRMergeStatus       @default(CLEAN)
-  filesChanged    Int                 @default(0)
-  linesAdded      Int                 @default(0)
-  linesRemoved    Int                 @default(0)
+  repoName       String
+  sourceBranch   String
+  targetBranch   String                   @default("main")
+  status         PRStatus                 @default(OPEN)
+  mergeStatus    PRMergeStatus            @default(CLEAN)
+  filesChanged   Int                      @default(0)
+  linesAdded     Int                      @default(0)
+  linesRemoved   Int                      @default(0)
   // Optional link out to the real PR if the team also has one on an
   // actual git host — TeamDesk becomes the review-tracking layer on top,
   // not a replacement for the diff view itself.
-  externalUrl     String?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  mergedAt        DateTime?
-  closedAt        DateTime?
-  organizationId  String
-  projectId       String?
-  authorId        String
-  organization    Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  project         Project?                 @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  author          User                     @relation("PullRequestAuthor", fields: [authorId], references: [id])
-  reviewers       PullRequestReviewer[]
-  linkedIssues    PullRequestLinkedIssue[]
-  comments        Comment[]
-  notifications   Notification[]
+  externalUrl    String?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  mergedAt       DateTime?
+  closedAt       DateTime?
+  organizationId String
+  projectId      String?
+  authorId       String
+  organization   Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project        Project?                 @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  author         User                     @relation("PullRequestAuthor", fields: [authorId], references: [id])
+  reviewers      PullRequestReviewer[]
+  linkedIssues   PullRequestLinkedIssue[]
+  comments       Comment[]
+  notifications  Notification[]
   // A merged PR is often what a deployment actually ships — optional link
   // lets DORA's "lead time for changes" be computed as
   // deployment.deployedAt - pullRequest.mergedAt for whichever PRs are
   // tagged onto a given deploy (see routes/deployments.ts's dora endpoint).
-  deployments     Deployment[]
+  deployments    Deployment[]
+  buildRuns      BuildRun[]
 
   // Powers "pull requests awaiting review" (organizationId IN (...),
   // status OPEN, joined against reviewers where userId = me).
@@ -611,37 +622,37 @@ enum DeployHealth {
 }
 
 model Deployment {
-  id               String            @id @default(uuid())
-  environment      DeployEnvironment @default(PRODUCTION)
-  status           DeployStatus      @default(QUEUED)
-  health           DeployHealth      @default(UNKNOWN)
-  commitHash       String
-  commitMessage    String
-  branch           String            @default("main")
-  durationSeconds  Int? // set once the deploy leaves IN_PROGRESS
-  notes            String? // free-text, e.g. rollback reason or incident note
-  createdAt        DateTime          @default(now()) // when the deploy was queued/triggered
-  startedAt        DateTime? // QUEUED -> IN_PROGRESS transition time
-  completedAt      DateTime? // SUCCESS/FAILED/ROLLED_BACK transition time
-  healthCheckedAt  DateTime?
-  rolledBackAt     DateTime?
-  organizationId   String
-  projectId        String?
-  pullRequestId    String? // the PR this deploy is believed to ship
-  triggeredById    String
-  rolledBackById   String?
+  id                   String            @id @default(uuid())
+  environment          DeployEnvironment @default(PRODUCTION)
+  status               DeployStatus      @default(QUEUED)
+  health               DeployHealth      @default(UNKNOWN)
+  commitHash           String
+  commitMessage        String
+  branch               String            @default("main")
+  durationSeconds      Int? // set once the deploy leaves IN_PROGRESS
+  notes                String? // free-text, e.g. rollback reason or incident note
+  createdAt            DateTime          @default(now()) // when the deploy was queued/triggered
+  startedAt            DateTime? // QUEUED -> IN_PROGRESS transition time
+  completedAt          DateTime? // SUCCESS/FAILED/ROLLED_BACK transition time
+  healthCheckedAt      DateTime?
+  rolledBackAt         DateTime?
+  organizationId       String
+  projectId            String?
+  pullRequestId        String? // the PR this deploy is believed to ship
+  triggeredById        String
+  rolledBackById       String?
   // Self-relation: when this deployment IS a rollback, previousDeploymentId
   // points at the deployment it restores the org to. Named `previous`
   // rather than `target` because it always points backward in time.
   previousDeploymentId String?
-  previousDeployment   Deployment?     @relation("DeploymentRollbackLineage", fields: [previousDeploymentId], references: [id])
-  rollbacks            Deployment[]    @relation("DeploymentRollbackLineage")
-  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  pullRequest      PullRequest?      @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
-  triggeredBy      User              @relation("DeploymentTriggeredBy", fields: [triggeredById], references: [id])
-  rolledBackBy     User?             @relation("DeploymentRolledBackBy", fields: [rolledBackById], references: [id])
-  notifications    Notification[]
+  previousDeployment   Deployment?       @relation("DeploymentRollbackLineage", fields: [previousDeploymentId], references: [id])
+  rollbacks            Deployment[]      @relation("DeploymentRollbackLineage")
+  organization         Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project              Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  pullRequest          PullRequest?      @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  triggeredBy          User              @relation("DeploymentTriggeredBy", fields: [triggeredById], references: [id])
+  rolledBackBy         User?             @relation("DeploymentRolledBackBy", fields: [rolledBackById], references: [id])
+  notifications        Notification[]
 
   // Powers "recent deployments" (organizationId IN (...), ordered by
   // createdAt) and per-environment DORA queries.
@@ -659,15 +670,139 @@ model Deployment {
 // entirely. TTL is enforced in application code (see AISummaryCacheStore),
 // not here, so the freshness window can change without a migration.
 model AISummaryCache {
-  id           String   @id @default(uuid())
-  userId       String
-  headline     String
-  bullets      Json // string[]
-  contextHash  String
-  model        String // which provider/model produced this (e.g. "claude-sonnet-4-6", "template-fallback")
-  generatedAt  DateTime @default(now())
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String   @id @default(uuid())
+  userId      String
+  headline    String
+  bullets     Json // string[]
+  contextHash String
+  model       String // which provider/model produced this (e.g. "claude-sonnet-4-6", "template-fallback")
+  generatedAt DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId])
   @@index([userId, generatedAt])
+}
+
+// ---------------------------------------------------------------------
+// Build Health — same move NativeDeploymentProvider and
+// NativePullRequestProvider already made for their domains: replaces the
+// permanently-`integrationRequired:true` MockBuildHealthProvider with a
+// first-class, native CI/build-tracking layer.
+//
+// Two models instead of one, because "build health" is really two
+// distinct concerns:
+//   1. BuildPipeline — the *configuration* of a CI pipeline for a project
+//      (which provider, which branch is canonical, and — the important
+//      part — a per-pipeline `webhookToken` that lets a *real* GitHub
+//      Actions / CircleCI / GitLab CI / Buildkite job POST its actual
+//      results here). This is what turns the feature from "another manual
+//      log" into a real integration: point your CI config at
+//      POST /api/webhooks/ci/:webhookToken and every run shows up.
+//   2. BuildRun — one row per pipeline execution, with rich enough detail
+//      (per-run coverage, pass/fail counts, flaky test names, a link back
+//      to the PR/commit) to power both the dashboard's compact
+//      BuildHealthCard *and* a full build-history/trends page, the same
+//      way Deployment backs both DeploymentsCard and DORA metrics.
+//
+// A pipeline can also be driven without any real CI at all — the same
+// `simulateOutcome`-style deterministic pipeline routes.ts uses for
+// deployments — so the feature is fully demoable with zero external
+// setup, and upgrading to a real webhook later requires no schema change.
+// ---------------------------------------------------------------------
+
+enum BuildProvider {
+  GITHUB_ACTIONS
+  CIRCLECI
+  GITLAB_CI
+  BUILDKITE
+  JENKINS
+  NATIVE // no external CI — runs deterministically-simulated builds
+}
+
+enum BuildRunStatus {
+  QUEUED
+  RUNNING
+  PASSING
+  FAILING
+  CANCELLED
+}
+
+// Per-project CI pipeline configuration. `webhookToken` is the secret
+// component of the inbound webhook URL — deliberately not the same as
+// any other resource's id, so it can be rotated (see
+// routes/buildPipelines.ts's rotate endpoint) without touching the
+// pipeline's own id and breaking every BuildRun's foreign key.
+model BuildPipeline {
+  id             String        @id @default(uuid())
+  name           String
+  provider       BuildProvider @default(NATIVE)
+  defaultBranch  String        @default("main")
+  webhookToken   String        @unique @default(uuid())
+  isActive       Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organizationId String
+  projectId      String?
+  createdById    String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project        Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdBy      User          @relation(fields: [createdById], references: [id])
+  runs           BuildRun[]
+
+  // Powers "list this org's pipelines" and "resolve pipeline from the
+  // public webhook URL" (unique webhookToken lookup, no join needed).
+  @@index([organizationId])
+  @@index([projectId])
+}
+
+// One row per CI execution. `buildNumber` is scoped to its pipeline (not
+// global) so it reads the way a real CI provider's UI does — "Build #42"
+// on *this* pipeline — and is assigned by the server (max+1) rather than
+// trusted from an inbound webhook payload, so a replayed/out-of-order
+// webhook can't create a duplicate or out-of-sequence number.
+model BuildRun {
+  id              String         @id @default(uuid())
+  buildNumber     Int
+  status          BuildRunStatus @default(QUEUED)
+  branch          String         @default("main")
+  commitHash      String
+  commitMessage   String?
+  testsPassing    Int            @default(0)
+  testsFailing    Int            @default(0)
+  testsSkipped    Int            @default(0)
+  coveragePercent Float?
+  durationSeconds Int?
+  // Names of tests that failed on this run but passed on the immediately
+  // preceding run for the same pipeline+branch — computed at ingest time
+  // (see routes/buildPipelines.ts) so "flaky" is a real signal (failed
+  // intermittently) rather than "failed once."
+  flakyTestNames  String[]       @default([])
+  failureSummary  String?
+  logsUrl         String?
+  source          String         @default("native") // "native" (simulated) or the provider name that sent the webhook
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime       @default(now())
+  organizationId  String
+  projectId       String?
+  pipelineId      String
+  pullRequestId   String?
+  // Null when the run was created by an external CI webhook rather than a
+  // user in this app clicking "run build" — same optionality reasoning as
+  // Deployment.rolledBackById.
+  triggeredById   String?
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project         Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  pipeline        BuildPipeline  @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  pullRequest     PullRequest?   @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  triggeredBy     User?          @relation("BuildRunTriggeredBy", fields: [triggeredById], references: [id])
+  notifications   Notification[]
+
+  // Powers "latest build health" (org, newest first) and per-pipeline
+  // history / trend charts.
+  @@unique([pipelineId, buildNumber])
+  @@index([organizationId, createdAt])
+  @@index([pipelineId, createdAt])
+  @@index([organizationId, branch, createdAt])
+  @@index([status])
 }

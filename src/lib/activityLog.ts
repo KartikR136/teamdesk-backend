@@ -56,6 +56,15 @@ export const ActivityAction = {
   DEPLOYMENT_STATUS_CHANGED: "DEPLOYMENT_STATUS_CHANGED",
   DEPLOYMENT_ROLLED_BACK: "DEPLOYMENT_ROLLED_BACK",
   DEPLOYMENT_HEALTH_CHECKED: "DEPLOYMENT_HEALTH_CHECKED",
+  // Build Health — mirrors the DEPLOYMENT_* convention. PIPELINE_CREATED
+  // covers the one-time CI setup step; BUILD_RUN_* covers every
+  // individual pipeline execution, whether triggered natively or ingested
+  // from a real CI webhook (see routes/buildPipelines.ts).
+  BUILD_PIPELINE_CREATED: "BUILD_PIPELINE_CREATED",
+  BUILD_PIPELINE_UPDATED: "BUILD_PIPELINE_UPDATED",
+  BUILD_PIPELINE_WEBHOOK_ROTATED: "BUILD_PIPELINE_WEBHOOK_ROTATED",
+  BUILD_RUN_CREATED: "BUILD_RUN_CREATED",
+  BUILD_RUN_INGESTED: "BUILD_RUN_INGESTED",
 } as const;
 
 export type ActivityActionType =

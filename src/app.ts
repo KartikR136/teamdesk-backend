@@ -14,6 +14,8 @@ import decisionsRouter from "./routes/decisions";
 import meetingsRouter from "./routes/meetings";
 import pullRequestsRouter from "./routes/pullRequests";
 import deploymentsRouter from "./routes/deployments";
+import buildPipelinesRouter from "./routes/buildPipelines";
+import ciWebhooksRouter from "./routes/ciWebhooks";
 import dashboardRouter from "./modules/dashboard/routes/dashboard.routes";
 import digestRouter from "./modules/dashboard/routes/digest.routes";
 import { errorHandler } from "./middleware/errorHandler";
@@ -75,6 +77,8 @@ app.use("/api", decisionsRouter); // has full nested paths already (organization
 app.use("/api", meetingsRouter); // has full nested paths already (organizations/:id/meetings, meetings/:id, meetings/:id/rsvp|notes|issues)\r
 app.use("/api", pullRequestsRouter); // has full nested paths already (organizations/:id/pull-requests, pull-requests/:id, .../review|merge|close|reopen|reviewers|issues|comments, pr-comments/:id)
 app.use("/api", deploymentsRouter); // has full nested paths already (organizations/:id/deployments, .../deployments/metrics/dora, deployments/:id, .../status|health|rollback)
+app.use("/api", buildPipelinesRouter); // has full nested paths already (organizations/:id/build-pipelines|build-runs|build-health, build-pipelines/:id, .../runs|rotate-webhook, build-runs/:id)
+app.use("/api/webhooks/ci", ciWebhooksRouter); // public — authenticated by the pipeline's own webhookToken, not a user session
 app.use("/api/dashboard", dashboardRouter); // intentionally cross-org — see dashboard.controller.ts
 app.use("/api/dashboard/digest", digestRouter); // cron-secret protected, not user-session protected
 

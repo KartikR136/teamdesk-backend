@@ -215,6 +215,57 @@ export async function resolveOrgFromDeployment(
   next();
 }
 
+// Same pattern for BuildPipeline-scoped routes (update, rotate webhook,
+// trigger a run) — never trusts a client-supplied organizationId.
+export async function resolveOrgFromBuildPipeline(
+  req: OrgScopedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const pipelineId = req.params.pipelineId;
+
+  if (typeof pipelineId !== "string") {
+    return res.status(400).json({ error: "Invalid pipeline id" });
+  }
+
+  const pipeline = await prisma.buildPipeline.findUnique({
+    where: { id: pipelineId },
+    select: { organizationId: true },
+  });
+
+  if (!pipeline) {
+    return res.status(404).json({ error: "Build pipeline not found" });
+  }
+
+  req.organizationId = pipeline.organizationId;
+  next();
+}
+
+// Same pattern for BuildRun-scoped routes (get a single run's detail).
+export async function resolveOrgFromBuildRun(
+  req: OrgScopedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const buildRunId = req.params.buildRunId;
+
+  if (typeof buildRunId !== "string") {
+    return res.status(400).json({ error: "Invalid build run id" });
+  }
+
+  const buildRun = await prisma.buildRun.findUnique({
+    where: { id: buildRunId },
+    select: { organizationId: true },
+  });
+
+  if (!buildRun) {
+    return res.status(404).json({ error: "Build run not found" });
+  }
+
+  req.organizationId = buildRun.organizationId;
+  next();
+}
+
 // Same pattern for PR-comment-scoped routes (edit/delete a single PR
 // comment), mirroring resolveOrgFromComment's Comment -> Issue ->
 // organizationId lookup but through PullRequest instead.

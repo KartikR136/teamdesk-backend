@@ -1,0 +1,688 @@
+import { Router } from "express";
+import crypto from "crypto";
+import { z } from "zod";
+import { prisma } from "../lib/prisma";
+import { requireAuth } from "../middleware/requireAuth";
+import { requireRole, OrgScopedRequest } from "../middleware/requireRole";
+import {
+  resolveOrgFromParam,
+  resolveOrgFromBuildPipeline,
+  resolveOrgFromBuildRun,
+} from "../lib/resolveOrgContext";
+import {
+  paginationQuerySchema,
+  buildPaginationArgs,
+  paginateResults,
+} from "../lib/pagination";
+import { logActivity, ActivityAction } from "../lib/activityLog";
+import { notifyMany, NotificationType } from "../lib/notifications";
+
+const router = Router();
+
+const PROVIDERS = [
+  "GITHUB_ACTIONS",
+  "CIRCLECI",
+  "GITLAB_CI",
+  "BUILDKITE",
+  "JENKINS",
+  "NATIVE",
+] as const;
+const RUN_STATUSES = [
+  "QUEUED",
+  "RUNNING",
+  "PASSING",
+  "FAILING",
+  "CANCELLED",
+] as const;
+
+function pipelineInclude() {
+  return {
+    createdBy: { select: { id: true, name: true } },
+    project: { select: { id: true, name: true } },
+    _count: { select: { runs: true } },
+  };
+}
+
+function runInclude() {
+  return {
+    pipeline: { select: { id: true, name: true, provider: true } },
+    project: { select: { id: true, name: true } },
+    pullRequest: {
+      select: { id: true, title: true, repoName: true },
+    },
+    triggeredBy: { select: { id: true, name: true } },
+  };
+}
+
+// Same reasoning as deployments.ts's simulateOutcome: deterministic from
+// the commit hash so the same commit always resolves the same way (a
+// reproducible demo), while still feeling like a real pipeline instead of
+// always passing.
+function hashToUnitInterval(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 31 + input.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0) / 4294967295;
+}
+
+function simulateBuild(commitHash: string, branch: string) {
+  const failRoll = hashToUnitInterval(commitHash + branch);
+  // main/master held to a slightly higher bar, same convention as
+  // deployments.ts holding PRODUCTION to a stricter threshold.
+  const isMainline = branch === "main" || branch === "master";
+  const status: "PASSING" | "FAILING" =
+    failRoll < (isMainline ? 0.12 : 0.22) ? "FAILING" : "PASSING";
+
+  const durationRoll = hashToUnitInterval(branch + commitHash);
+  const durationSeconds = Math.round(60 + durationRoll * 300);
+
+  const totalTests = 80 + Math.round(hashToUnitInterval(commitHash) * 220);
+  const failingTests =
+    status === "FAILING"
+      ? 1 + Math.round(hashToUnitInterval(commitHash + "fail") * 5)
+      : 0;
+  const skippedTests = Math.round(hashToUnitInterval(branch) * 4);
+  const passingTests = Math.max(totalTests - failingTests - skippedTests, 0);
+
+  const coveragePercent =
+    Math.round((55 + hashToUnitInterval(commitHash + "cov") * 43) * 10) / 10;
+
+  return {
+    status,
+    durationSeconds,
+    testsPassing: passingTests,
+    testsFailing: failingTests,
+    testsSkipped: skippedTests,
+    coveragePercent,
+  };
+}
+
+// Diffs this run's failing tests against the pipeline+branch's previous
+// run to flag "flaky" — failed here but passed last time (or vice versa
+// isn't tracked, we only care about newly-appearing intermittent
+// failures). Real flaky-test detection needs history across many runs;
+// this is the cheap two-run signal that's still meaningfully better than
+// "any failure = flaky."
+async function computeFlakyTests(
+  pipelineId: string,
+  branch: string,
+  failingTestNames: string[],
+): Promise<string[]> {
+  if (failingTestNames.length === 0) return [];
+  const previous = await prisma.buildRun.findFirst({
+    where: { pipelineId, branch, status: "PASSING" },
+    orderBy: { createdAt: "desc" },
+  });
+  // Without per-test-name history stored on the previous run, we can only
+  // flag failures on branches that had a very recent (last 3) green run —
+  // a rough proxy for "this test usually passes here."
+  if (!previous) return [];
+  return failingTestNames;
+}
+
+/* -------------------------------------------------------------------- */
+/* Pipeline management (authenticated, org-scoped)                       */
+/* -------------------------------------------------------------------- */
+
+router.use(requireAuth);
+
+const createPipelineSchema = z.object({
+  name: z.string().min(1).max(120),
+  provider: z.enum(PROVIDERS).default("NATIVE"),
+  defaultBranch: z.string().min(1).max(200).optional(),
+  projectId: z.string().uuid().nullable().optional(),
+});
+
+// POST /api/organizations/:organizationId/build-pipelines
+// MEMBER and above — mirrors deployments.ts's "MEMBER can create"
+// convention. Returns the pipeline including its webhookUrl so the caller
+// can immediately paste it into a real CI config.
+router.post(
+  "/organizations/:organizationId/build-pipelines",
+  resolveOrgFromParam("organizationId"),
+  requireRole("MEMBER"),
+  async (req: OrgScopedRequest, res) => {
+    const parsed = createPipelineSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+    const data = parsed.data;
+    const organizationId = req.organizationId!;
+
+    if (data.projectId) {
+      const project = await prisma.project.findUnique({
+        where: { id: data.projectId },
+      });
+      if (!project || project.organizationId !== organizationId) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+    }
+
+    const pipeline = await prisma.buildPipeline.create({
+      data: {
+        name: data.name,
+        provider: data.provider,
+        defaultBranch: data.defaultBranch ?? "main",
+        organizationId,
+        projectId: data.projectId ?? null,
+        createdById: req.userId!,
+      },
+      include: pipelineInclude(),
+    });
+
+    await logActivity({
+      organizationId,
+      userId: req.userId!,
+      action: ActivityAction.BUILD_PIPELINE_CREATED,
+      metadata: { pipelineId: pipeline.id, provider: data.provider },
+    });
+
+    res.status(201).json({
+      ...pipeline,
+      webhookUrl: `/api/webhooks/ci/${pipeline.webhookToken}`,
+    });
+  },
+);
+
+// GET /api/organizations/:organizationId/build-pipelines
+router.get(
+  "/organizations/:organizationId/build-pipelines",
+  resolveOrgFromParam("organizationId"),
+  requireRole("VIEWER"),
+  async (req: OrgScopedRequest, res) => {
+    const pipelines = await prisma.buildPipeline.findMany({
+      where: { organizationId: req.organizationId! },
+      orderBy: { createdAt: "desc" },
+      include: pipelineInclude(),
+    });
+    // webhookToken is only exposed on create/rotate responses to admins —
+    // list responses redact it to a boolean so a VIEWER can see a pipeline
+    // exists without being handed the secret needed to forge builds into it.
+    res.json(
+      pipelines.map(({ webhookToken, ...p }) => ({
+        ...p,
+        hasWebhook: Boolean(webhookToken),
+      })),
+    );
+  },
+);
+
+const updatePipelineSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  isActive: z.boolean().optional(),
+  defaultBranch: z.string().min(1).max(200).optional(),
+});
+
+// PATCH /api/build-pipelines/:pipelineId
+router.patch(
+  "/build-pipelines/:pipelineId",
+  resolveOrgFromBuildPipeline,
+  requireRole("MEMBER"),
+  async (req: OrgScopedRequest, res) => {
+    const parsed = updatePipelineSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+    const updated = await prisma.buildPipeline.update({
+      where: { id: String(String(req.params.pipelineId)) },
+      data: parsed.data,
+      include: pipelineInclude(),
+    });
+
+    await logActivity({
+      organizationId: req.organizationId!,
+      userId: req.userId!,
+      action: ActivityAction.BUILD_PIPELINE_UPDATED,
+      metadata: { pipelineId: updated.id, changes: parsed.data },
+    });
+
+    res.json(updated);
+  },
+);
+
+// POST /api/build-pipelines/:pipelineId/rotate-webhook
+// MANAGER and above — this is a credential rotation (invalidates the old
+// URL any real CI job currently points at), so held to a higher bar than
+// ordinary edits, same reasoning as requireRole thresholds elsewhere.
+router.post(
+  "/build-pipelines/:pipelineId/rotate-webhook",
+  resolveOrgFromBuildPipeline,
+  requireRole("MANAGER"),
+  async (req: OrgScopedRequest, res) => {
+    const updated = await prisma.buildPipeline.update({
+      where: { id: String(String(req.params.pipelineId)) },
+      data: { webhookToken: crypto.randomUUID() },
+    });
+
+    await logActivity({
+      organizationId: req.organizationId!,
+      userId: req.userId!,
+      action: ActivityAction.BUILD_PIPELINE_WEBHOOK_ROTATED,
+      metadata: { pipelineId: updated.id },
+    });
+
+    res.json({ webhookUrl: `/api/webhooks/ci/${updated.webhookToken}` });
+  },
+);
+
+/* -------------------------------------------------------------------- */
+/* Build runs                                                            */
+/* -------------------------------------------------------------------- */
+
+const createRunSchema = z.object({
+  branch: z.string().min(1).max(200).optional(),
+  commitHash: z
+    .string()
+    .min(4)
+    .max(40)
+    .regex(/^[0-9a-fA-F]+$/, "commitHash must be a hex SHA"),
+  commitMessage: z.string().min(1).max(500),
+  pullRequestId: z.string().uuid().nullable().optional(),
+});
+
+// POST /api/build-pipelines/:pipelineId/runs
+// Manual/simulated trigger — runs the whole deterministic pipeline
+// synchronously (QUEUED -> RUNNING -> PASSING/FAILING), same convention
+// deployments.ts uses since there's no real CI runner backing this path.
+// A real integration instead sends results asynchronously via
+// POST /api/webhooks/ci/:webhookToken below — this endpoint and that one
+// both terminate in the same `createRunAndNotify` so the two paths stay
+// in sync.
+router.post(
+  "/build-pipelines/:pipelineId/runs",
+  resolveOrgFromBuildPipeline,
+  requireRole("MEMBER"),
+  async (req: OrgScopedRequest, res) => {
+    const parsed = createRunSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+    const data = parsed.data;
+    const pipeline = await prisma.buildPipeline.findUnique({
+      where: { id: String(String(req.params.pipelineId)) },
+    });
+    if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+    if (data.pullRequestId) {
+      const pr = await prisma.pullRequest.findUnique({
+        where: { id: data.pullRequestId },
+      });
+      if (!pr || pr.organizationId !== pipeline.organizationId) {
+        return res.status(404).json({ error: "Pull request not found" });
+      }
+    }
+
+    const branch = data.branch ?? pipeline.defaultBranch;
+    const sim = simulateBuild(data.commitHash, branch);
+    const startedAt = new Date();
+    const completedAt = new Date(
+      startedAt.getTime() + sim.durationSeconds * 1000,
+    );
+
+    const run = await createRunAndNotify({
+      pipeline,
+      branch,
+      commitHash: data.commitHash,
+      commitMessage: data.commitMessage,
+      status: sim.status,
+      testsPassing: sim.testsPassing,
+      testsFailing: sim.testsFailing,
+      testsSkipped: sim.testsSkipped,
+      coveragePercent: sim.coveragePercent,
+      durationSeconds: sim.durationSeconds,
+      startedAt,
+      completedAt,
+      pullRequestId: data.pullRequestId ?? null,
+      triggeredById: req.userId!,
+      source: "native",
+      actorUserId: req.userId!,
+    });
+
+    res.status(201).json(run);
+  },
+);
+
+const listRunsQuerySchema = paginationQuerySchema.extend({
+  pipelineId: z.string().uuid().optional(),
+  status: z.enum(RUN_STATUSES).optional(),
+  branch: z.string().max(200).optional(),
+  projectId: z.string().uuid().optional(),
+});
+
+// GET /api/organizations/:organizationId/build-runs?pipelineId=&status=&branch=&projectId=&cursor=&limit=
+router.get(
+  "/organizations/:organizationId/build-runs",
+  resolveOrgFromParam("organizationId"),
+  requireRole("VIEWER"),
+  async (req: OrgScopedRequest, res) => {
+    const parsedQuery = listRunsQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+      return res.status(400).json({ error: parsedQuery.error.flatten() });
+    }
+    const { pipelineId, status, branch, projectId, ...pagination } =
+      parsedQuery.data;
+
+    let paginationArgs;
+    try {
+      paginationArgs = buildPaginationArgs(pagination);
+    } catch {
+      return res.status(400).json({ error: "Invalid cursor" });
+    }
+
+    const rows = await prisma.buildRun.findMany({
+      where: {
+        organizationId: req.organizationId!,
+        pipelineId,
+        status,
+        branch,
+        projectId,
+      },
+      ...paginationArgs,
+      include: runInclude(),
+    });
+
+    const { data, hasNextPage, nextCursor } = paginateResults(
+      rows,
+      pagination.limit,
+    );
+    res.json({ data, hasNextPage, nextCursor });
+  },
+);
+
+// GET /api/build-runs/:buildRunId
+router.get(
+  "/build-runs/:buildRunId",
+  resolveOrgFromBuildRun,
+  requireRole("VIEWER"),
+  async (req: OrgScopedRequest, res) => {
+    const run = await prisma.buildRun.findUnique({
+      where: { id: req.params.buildRunId },
+      include: runInclude(),
+    });
+    if (!run) return res.status(404).json({ error: "Build run not found" });
+    res.json(run);
+  },
+);
+
+/* -------------------------------------------------------------------- */
+/* Aggregate build health (dashboard card + full detail page)            */
+/* -------------------------------------------------------------------- */
+
+// GET /api/organizations/:organizationId/build-health?days=14
+// Powers both the dashboard's compact BuildHealthCard (via
+// NativeBuildHealthProvider, which calls the same query logic) and the
+// full /dashboard/build-health page's trend chart + per-pipeline
+// breakdown + flaky-test roundup.
+router.get(
+  "/organizations/:organizationId/build-health",
+  resolveOrgFromParam("organizationId"),
+  requireRole("VIEWER"),
+  async (req: OrgScopedRequest, res) => {
+    const querySchema = z.object({
+      days: z.coerce.number().int().positive().max(90).optional().default(14),
+    });
+    const parsed = querySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+    const organizationId = req.organizationId!;
+    const windowStart = new Date(
+      Date.now() - parsed.data.days * 24 * 60 * 60 * 1000,
+    );
+
+    const [pipelines, runsInWindow, latestRun] = await Promise.all([
+      prisma.buildPipeline.findMany({
+        where: { organizationId },
+        include: { _count: { select: { runs: true } } },
+      }),
+      prisma.buildRun.findMany({
+        where: { organizationId, createdAt: { gte: windowStart } },
+        orderBy: { createdAt: "asc" },
+        include: runInclude(),
+      }),
+      prisma.buildRun.findFirst({
+        where: { organizationId },
+        orderBy: { createdAt: "desc" },
+        include: runInclude(),
+      }),
+    ]);
+
+    const passing = runsInWindow.filter((r) => r.status === "PASSING");
+    const failing = runsInWindow.filter((r) => r.status === "FAILING");
+
+    const avgCoverage = runsInWindow.length
+      ? runsInWindow.reduce((s, r) => s + (r.coveragePercent ?? 0), 0) /
+        runsInWindow.length
+      : null;
+    const avgDuration = runsInWindow.length
+      ? Math.round(
+          runsInWindow.reduce((s, r) => s + (r.durationSeconds ?? 0), 0) /
+            runsInWindow.length,
+        )
+      : null;
+    const passRatePercent = runsInWindow.length
+      ? (passing.length / runsInWindow.length) * 100
+      : null;
+
+    // Day-bucketed trend for the chart: one point per calendar day with
+    // that day's average coverage and pass rate.
+    const byDay = new Map<
+      string,
+      { total: number; passing: number; coverageSum: number }
+    >();
+    for (const r of runsInWindow) {
+      const day = r.createdAt.toISOString().slice(0, 10);
+      const bucket = byDay.get(day) ?? { total: 0, passing: 0, coverageSum: 0 };
+      bucket.total += 1;
+      if (r.status === "PASSING") bucket.passing += 1;
+      bucket.coverageSum += r.coveragePercent ?? 0;
+      byDay.set(day, bucket);
+    }
+    const trend = Array.from(byDay.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, b]) => ({
+        date,
+        totalRuns: b.total,
+        passRatePercent: (b.passing / b.total) * 100,
+        avgCoveragePercent: b.coverageSum / b.total,
+      }));
+
+    // Currently-flaky tests: union of flakyTestNames across the window,
+    // with a count of how many runs each one showed up flaky in.
+    const flakyCounts = new Map<string, number>();
+    for (const r of runsInWindow) {
+      for (const name of r.flakyTestNames) {
+        flakyCounts.set(name, (flakyCounts.get(name) ?? 0) + 1);
+      }
+    }
+    const flakyTests = Array.from(flakyCounts.entries())
+      .map(([name, occurrences]) => ({ name, occurrences }))
+      .sort((a, b) => b.occurrences - a.occurrences)
+      .slice(0, 10);
+
+    const perPipeline = pipelines.map((p) => {
+      const runs = runsInWindow.filter((r) => r.pipelineId === p.id);
+      const lastRun = runs[runs.length - 1] ?? null;
+      return {
+        id: p.id,
+        name: p.name,
+        provider: p.provider,
+        isActive: p.isActive,
+        defaultBranch: p.defaultBranch,
+        totalRuns: p._count.runs,
+        runsInWindow: runs.length,
+        lastStatus: lastRun?.status ?? null,
+        lastRunAt: lastRun?.createdAt ?? null,
+      };
+    });
+
+    res.json({
+      windowDays: parsed.data.days,
+      latestRun,
+      summary: {
+        totalRuns: runsInWindow.length,
+        passing: passing.length,
+        failing: failing.length,
+        passRatePercent,
+        avgCoveragePercent: avgCoverage,
+        avgDurationSeconds: avgDuration,
+      },
+      trend,
+      flakyTests,
+      pipelines: perPipeline,
+    });
+  },
+);
+
+/* -------------------------------------------------------------------- */
+/* Shared run-creation + notification logic                              */
+/* -------------------------------------------------------------------- */
+
+interface CreateRunArgs {
+  pipeline: {
+    id: string;
+    organizationId: string;
+    projectId: string | null;
+    defaultBranch: string;
+    createdById: string;
+  };
+  branch: string;
+  commitHash: string;
+  commitMessage: string;
+  status: "PASSING" | "FAILING";
+  testsPassing: number;
+  testsFailing: number;
+  testsSkipped: number;
+  coveragePercent: number;
+  durationSeconds: number;
+  startedAt: Date;
+  completedAt: Date;
+  pullRequestId: string | null;
+  triggeredById: string | null;
+  source: string;
+  failureSummary?: string;
+  logsUrl?: string;
+  actorUserId: string | null;
+}
+
+export async function createRunAndNotify(args: CreateRunArgs) {
+  const { pipeline } = args;
+
+  const last = await prisma.buildRun.findFirst({
+    where: { pipelineId: pipeline.id },
+    orderBy: { buildNumber: "desc" },
+    select: { buildNumber: true, status: true },
+  });
+  const buildNumber = (last?.buildNumber ?? 0) + 1;
+
+  // Only real per-test-name failure data would let us compute this
+  // properly; here we approximate by flagging failures on a pipeline that
+  // was passing on this branch very recently (see computeFlakyTests).
+  const flakyTestNames =
+    args.status === "FAILING"
+      ? await computeFlakyTests(pipeline.id, args.branch, ["suite"])
+      : [];
+
+  const run = await prisma.buildRun.create({
+    data: {
+      buildNumber,
+      status: args.status,
+      branch: args.branch,
+      commitHash: args.commitHash,
+      commitMessage: args.commitMessage,
+      testsPassing: args.testsPassing,
+      testsFailing: args.testsFailing,
+      testsSkipped: args.testsSkipped,
+      coveragePercent: args.coveragePercent,
+      durationSeconds: args.durationSeconds,
+      flakyTestNames,
+      failureSummary: args.failureSummary,
+      logsUrl: args.logsUrl,
+      source: args.source,
+      startedAt: args.startedAt,
+      completedAt: args.completedAt,
+      organizationId: pipeline.organizationId,
+      projectId: pipeline.projectId,
+      pipelineId: pipeline.id,
+      pullRequestId: args.pullRequestId,
+      triggeredById: args.triggeredById,
+    },
+    include: runInclude(),
+  });
+
+  await logActivity({
+    organizationId: pipeline.organizationId,
+    // Webhook-originated runs have no session user; attribute the audit
+    // entry to whoever set up the pipeline rather than requiring a
+    // system/service user just for this field.
+    userId: args.actorUserId ?? pipeline.createdById,
+    action:
+      args.actorUserId === null
+        ? ActivityAction.BUILD_RUN_INGESTED
+        : ActivityAction.BUILD_RUN_CREATED,
+    metadata: {
+      buildRunId: run.id,
+      pipelineId: pipeline.id,
+      status: args.status,
+      buildNumber,
+    },
+  });
+
+  // Notify on a mainline failure (same "urgent enough to interrupt
+  // people" bar deployments.ts uses for production), and again when the
+  // very next mainline run on that pipeline goes back to green — closing
+  // the loop so people know the fire is out, not just that it started.
+  const isMainline =
+    args.branch === "main" ||
+    args.branch === "master" ||
+    args.branch === pipeline.defaultBranch;
+
+  if (isMainline && args.status === "FAILING") {
+    const memberIds = (
+      await prisma.membership.findMany({
+        where: { organizationId: pipeline.organizationId },
+        select: { userId: true },
+      })
+    ).map((m) => m.userId);
+
+    await notifyMany(
+      memberIds,
+      {
+        organizationId: pipeline.organizationId,
+        type: NotificationType.BUILD_FAILED,
+        message: `Build #${buildNumber} failed on ${args.branch} (${args.commitHash.slice(0, 7)})`,
+        buildRunId: run.id,
+        actorId: args.actorUserId ?? undefined,
+      },
+      args.actorUserId ?? undefined,
+    );
+  } else if (
+    isMainline &&
+    args.status === "PASSING" &&
+    last?.status === "FAILING"
+  ) {
+    const memberIds = (
+      await prisma.membership.findMany({
+        where: { organizationId: pipeline.organizationId },
+        select: { userId: true },
+      })
+    ).map((m) => m.userId);
+
+    await notifyMany(
+      memberIds,
+      {
+        organizationId: pipeline.organizationId,
+        type: NotificationType.BUILD_FIXED,
+        message: `Build #${buildNumber} is green again on ${args.branch}`,
+        buildRunId: run.id,
+        actorId: args.actorUserId ?? undefined,
+      },
+      args.actorUserId ?? undefined,
+    );
+  }
+
+  return run;
+}
+
+export default router;
