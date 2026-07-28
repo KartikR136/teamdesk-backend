@@ -65,6 +65,13 @@ export const ActivityAction = {
   BUILD_PIPELINE_WEBHOOK_ROTATED: "BUILD_PIPELINE_WEBHOOK_ROTATED",
   BUILD_RUN_CREATED: "BUILD_RUN_CREATED",
   BUILD_RUN_INGESTED: "BUILD_RUN_INGESTED",
+  // Sprints — mirrors the DECISION_*/MEETING_* convention: status
+  // transitions (PLANNED -> ACTIVE -> COMPLETED) get their own action
+  // rather than folding into SPRINT_UPDATED, since "sprint started" and
+  // "sprint completed" are audit-worthy milestones in their own right.
+  SPRINT_CREATED: "SPRINT_CREATED",
+  SPRINT_UPDATED: "SPRINT_UPDATED",
+  SPRINT_STATUS_CHANGED: "SPRINT_STATUS_CHANGED",
 } as const;
 
 export type ActivityActionType =

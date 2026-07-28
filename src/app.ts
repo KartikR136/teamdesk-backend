@@ -31,6 +31,7 @@ import {
   generalLimiter,
 } from "./middleware/rateLimiters";
 import demoAttacksRouter from "./routes/demoAttacks";
+import sprintsRouter from "./routes/sprints";
 
 export const app = express();
 
@@ -84,6 +85,7 @@ app.use("/api", meetingsRouter); // has full nested paths already (organizations
 app.use("/api", pullRequestsRouter); // has full nested paths already (organizations/:id/pull-requests, pull-requests/:id, .../review|merge|close|reopen|reviewers|issues|comments, pr-comments/:id)
 app.use("/api", deploymentsRouter); // has full nested paths already (organizations/:id/deployments, .../deployments/metrics/dora, deployments/:id, .../status|health|rollback)
 app.use("/api", buildPipelinesRouter); // has full nested paths already (organizations/:id/build-pipelines|build-runs|build-health, build-pipelines/:id, .../runs|rotate-webhook, build-runs/:id)
+app.use("/api", sprintsRouter); // has full nested paths already (organizations/:id/sprints, sprints/:id)
 app.use("/api/webhooks/ci", ciWebhooksRouter); // public — authenticated by the pipeline's own webhookToken, not a user session
 app.use("/api/webhooks/git", gitWebhooksRouter); // public — authenticated by the user's own codingWebhookToken
 app.use("/api/dashboard", dashboardRouter); // intentionally cross-org — see dashboard.controller.ts

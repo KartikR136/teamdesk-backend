@@ -28,6 +28,11 @@ const createIssueSchema = z.object({
   priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
   dueDate: z.string().datetime().optional(),
   estimatePoints: z.number().int().min(0).optional(),
+  // Additive, optional — lets Quick Actions' "Create Issue" dialog assign
+  // straight into a sprint's backlog at creation time. Verified against
+  // the same org+project below, same defense-in-depth reasoning as
+  // projectId itself.
+  sprintId: z.string().uuid().optional(),
 });
 
 router.post(
@@ -50,6 +55,15 @@ router.post(
       return res.status(404).json({ error: "Project not found" });
     }
 
+    if (parsed.data.sprintId) {
+      const sprint = await prisma.sprint.findUnique({
+        where: { id: parsed.data.sprintId },
+      });
+      if (!sprint || sprint.projectId !== parsed.data.projectId) {
+        return res.status(404).json({ error: "Sprint not found" });
+      }
+    }
+
     const issue = await prisma.issue.create({
       data: {
         title: parsed.data.title,
@@ -62,7 +76,9 @@ router.post(
           ? new Date(parsed.data.dueDate)
           : undefined,
         estimatePoints: parsed.data.estimatePoints,
+        sprintId: parsed.data.sprintId,
       },
+      include: { assignee: { select: { id: true, name: true } } },
     });
 
     await logActivity({
@@ -85,6 +101,7 @@ const updateIssueSchema = z.object({
   dueDate: z.string().datetime().nullable().optional(),
   estimatePoints: z.number().int().min(0).nullable().optional(),
   assigneeId: z.string().uuid().nullable().optional(),
+  sprintId: z.string().uuid().nullable().optional(),
 });
 
 router.patch(
@@ -256,8 +273,18 @@ router.get(
       return res.status(400).json({ error: "Invalid cursor" });
     }
 
+    // Optional ?q= does a case-insensitive title search — powers the
+    // command palette's live "Issues" results (see CommandPalette.tsx).
+    // Deliberately simple (title contains, no full-text index): this is a
+    // quick-jump tool, not a search product, and the table is nowhere
+    // near the size where Postgres ILIKE would be a bottleneck.
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+
     const issues = await prisma.issue.findMany({
-      where: { organizationId: req.organizationId! },
+      where: {
+        organizationId: req.organizationId!,
+        ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
+      },
       include: { assignee: { select: { id: true, name: true } } },
       ...paginationArgs,
     });

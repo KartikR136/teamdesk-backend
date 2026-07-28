@@ -25,6 +25,7 @@ model Organization {
   buildPipelines BuildPipeline[]
   buildRuns      BuildRun[]
   gitCommits     GitCommit[]
+  sprints        Sprint[]
 }
 
 model User {
@@ -57,6 +58,7 @@ model User {
   rolledBackDeployments Deployment[]          @relation("DeploymentRolledBackBy")
   triggeredBuildRuns    BuildRun[]            @relation("BuildRunTriggeredBy")
   createdBuildPipelines BuildPipeline[]
+  createdSprints        Sprint[]
 
   // --- Coding Streak feature (additive) ---
   longestStreakDays      Int                @default(0)
@@ -148,6 +150,7 @@ model Project {
   deployments    Deployment[]
   buildPipelines BuildPipeline[]
   buildRuns      BuildRun[]
+  sprints        Sprint[]
   organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
@@ -167,6 +170,11 @@ model Issue {
   projectId        String
   creatorId        String
   assigneeId       String?
+  // Additive, optional link into the Sprint feature (see Sprint model
+  // below). Nullable and onDelete: SetNull so an issue never disappears
+  // or fails to save if its sprint is later deleted — it just falls back
+  // to the project's unsprinted backlog.
+  sprintId         String?
   activityLogs     ActivityLog[]
   comments         Comment[]
   decisionLinks    DecisionRelatedIssue[]
@@ -178,12 +186,14 @@ model Issue {
   creator          User                     @relation("IssueCreator", fields: [creatorId], references: [id])
   organization     Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project          Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sprint           Sprint?                  @relation(fields: [sprintId], references: [id], onDelete: SetNull)
 
   @@index([organizationId])
   @@index([organizationId, createdAt])
   @@index([projectId])
   @@index([assigneeId])
   @@index([assigneeId, dueDate])
+  @@index([sprintId])
 }
 
 model Comment {
@@ -889,5 +899,50 @@ model BuildRun {
   @@index([organizationId, createdAt])
   @@index([pipelineId, createdAt])
   @@index([organizationId, branch, createdAt])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------
+// Sprints — Quick Actions milestone. Turns "Create Sprint" from a
+// disabled tile into a real, first-class feature: a lightweight,
+// native sprint/iteration layer scoped to a Project, the same way
+// BuildPipeline/BuildRun added a native build-health layer instead of
+// staying permanently `integrationRequired: true`.
+//
+// Deliberately minimal — one model, one enum, one optional FK on Issue —
+// because the goal here is "make the Quick Actions tile real and
+// useful," not "build a full agile-planning suite." Story points already
+// exist on Issue (estimatePoints), so sprint velocity/progress can be
+// computed from existing data without adding anything new to Issue
+// besides the sprintId link itself.
+// ---------------------------------------------------------------------
+
+enum SprintStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+}
+
+model Sprint {
+  id             String       @id @default(uuid())
+  name           String
+  goal           String?
+  status         SprintStatus @default(PLANNED)
+  startDate      DateTime
+  endDate        DateTime
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organizationId String
+  projectId      String
+  createdById    String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy      User         @relation(fields: [createdById], references: [id])
+  issues         Issue[]
+
+  // Powers "list this project's sprints" (newest first) and the
+  // org-wide "active sprints" quick-actions/dashboard queries.
+  @@index([organizationId, createdAt])
+  @@index([projectId, createdAt])
   @@index([status])
 }
