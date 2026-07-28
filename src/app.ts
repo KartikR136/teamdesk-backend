@@ -32,6 +32,7 @@ import {
 } from "./middleware/rateLimiters";
 import demoAttacksRouter from "./routes/demoAttacks";
 import sprintsRouter from "./routes/sprints";
+import notificationsRouter from "./routes/notifications";
 
 export const app = express();
 
@@ -91,6 +92,7 @@ app.use("/api/webhooks/git", gitWebhooksRouter); // public — authenticated by 
 app.use("/api/dashboard", dashboardRouter); // intentionally cross-org — see dashboard.controller.ts
 app.use("/api/dashboard/digest", digestRouter); // cron-secret protected, not user-session protected
 app.use("/api/dashboard/coding-streak", codingStreakRouter); // detail/goals/focus-session/leaderboard + cron-secret maintenance
+app.use("/api", notificationsRouter); // has full nested paths already (notifications, notifications/:id/read, .../unread-count, .../read-all, .../preferences, .../stream)
 
 // Attack-console demo routes — only exist at all when DEMO_MODE is set.
 // See THREAT_MODEL.md for why this must never be enabled against a

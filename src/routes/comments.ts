@@ -14,6 +14,7 @@ import {
 } from "../lib/pagination";
 import { logActivity, ActivityAction } from "../lib/activityLog";
 import { notify, NotificationType } from "../lib/notifications";
+import { resolveMentions } from "../lib/mentionParser";
 
 const router = Router();
 router.use(requireAuth);
@@ -73,6 +74,7 @@ router.post(
           (id): id is string => !!id && id !== req.userId,
         ),
       );
+
       // Awaited (not fire-and-forget) — same reasoning as issues.ts's
       // notify() calls: notify() swallows its own errors, awaiting just
       // makes the writes complete before the response instead of racing
@@ -90,6 +92,31 @@ router.post(
         ),
       );
     }
+
+    // @mention notifications — separate from the assignee/creator
+    // COMMENT notify above: a mention should fire even for someone who
+    // is neither the assignee nor creator, and should use the MENTION
+    // type (already mapped to a dedicated "AtSign" icon end-to-end) so
+    // it reads differently in the inbox than an ordinary comment.
+    const mentioned = await resolveMentions(
+      parsed.data.body,
+      req.organizationId!,
+    );
+
+    await Promise.all(
+      mentioned
+        .filter((m) => m.userId !== req.userId)
+        .map((m) =>
+          notify({
+            recipientId: m.userId,
+            organizationId: req.organizationId!,
+            type: NotificationType.MENTION,
+            message: `mentioned you in a comment on "${issue?.title ?? "an issue"}"`,
+            issueId,
+            actorId: req.userId!,
+          }),
+        ),
+    );
 
     res.status(201).json(comment);
   },
@@ -165,11 +192,9 @@ router.patch(
     const isAdmin = req.membershipRole === "ADMIN";
 
     if (!isAuthor && !isAdmin) {
-      return res
-        .status(403)
-        .json({
-          error: "Only the comment author or an admin can edit this comment",
-        });
+      return res.status(403).json({
+        error: "Only the comment author or an admin can edit this comment",
+      });
     }
 
     const updated = await prisma.comment.update({
@@ -217,11 +242,9 @@ router.delete(
     const isAdmin = req.membershipRole === "ADMIN";
 
     if (!isAuthor && !isAdmin) {
-      return res
-        .status(403)
-        .json({
-          error: "Only the comment author or an admin can delete this comment",
-        });
+      return res.status(403).json({
+        error: "Only the comment author or an admin can delete this comment",
+      });
     }
 
     await prisma.comment.delete({ where: { id: commentId } });

@@ -48,6 +48,7 @@ model User {
   refreshTokens         RefreshToken[]
   notificationsReceived Notification[]        @relation("NotificationRecipient")
   notificationsCaused   Notification[]        @relation("NotificationActor")
+  notificationPreferences NotificationPreference[]
   recentlyViewedIssues  RecentlyViewedIssue[]
   createdMeetings       Meeting[]             @relation("MeetingCreator")
   meetingAttendances    MeetingAttendee[]     @relation("MeetingAttendance")
@@ -363,6 +364,20 @@ model Notification {
   @@index([recipientId, createdAt])
   @@index([organizationId])
 }
+
+model NotificationPreference {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  inApp     Boolean          @default(true)
+  email     Boolean          @default(false)
+  updatedAt DateTime         @updatedAt
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@index([userId])
+}
+
 
 // Backs the dashboard's "Recently Viewed Issues" section. One row per
 // (user, issue) pair — re-viewing an issue updates viewedAt rather than
